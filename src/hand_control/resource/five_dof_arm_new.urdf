@@ -1,0 +1,112 @@
+<robot name="robot_arm">
+ 	<link name="base_link">
+		<visual>
+		    <origin xyz="0 0 0.0235" rpy="0 0 0"/>
+			<geometry>
+				<cylinder length="0.047" radius="0.089"/>
+			</geometry>
+		</visual>	
+	</link>
+
+    <link name="base_rot">
+		<visual>
+            <origin xyz="0 0 0.04675" rpy="0 0 0"/>
+          	<geometry>
+                <box size="0.1 0.1 0.0935" />
+			</geometry>
+		</visual>	
+	</link>
+    
+    <joint name="base_joint" type="revolute">
+      <parent link="base_link"/>
+      <child link="base_rot"/>
+      <origin xyz="0 0 0.047" rpy="0 0 0" />
+      <axis xyz="0 0 1"/>
+        <limit lower="-3.14" upper="3.14" />
+    </joint>
+    
+    <link name="arm1">
+		<visual>
+          <origin xyz="0 0 0.075" rpy="0 0 0" />
+          	<geometry>
+            	<cylinder length="0.150" radius="0.022"/>
+			</geometry>
+		</visual>	
+	</link>
+    <joint name="shoulder_joint" type="revolute">
+      <parent link="base_rot"/>
+      <child link="arm1"/>
+      <origin xyz="0 0 0.0935" rpy="0 0 0" />
+      <axis xyz="0 1 0"/>
+      <limit lower="-1.832" upper="1.832" />
+    </joint>
+    
+    <link name="arm2">
+		<visual>
+          <origin xyz="0 0 0.075" rpy="0 0 0" />
+          	<geometry>
+            	<cylinder length="0.150" radius="0.0175"/>
+			</geometry>
+		</visual>	
+	</link>
+    
+    <link name="tilt">
+		<visual>
+          <origin xyz="0 0 0.04675" rpy="0 0 0" />
+          	<geometry>
+            	<box size="0.1 0.1 0.0935" />
+			</geometry>
+		</visual>	
+    </link>
+    
+    <link name="top">
+		<visual>
+          <origin xyz="0 0 0.127" rpy="0 0 0" />
+          	<geometry>
+            	<cylinder length="0.254" radius="0.04"/>
+			</geometry>
+		</visual>	
+	</link>
+    
+    <link name="needle">
+		<visual>
+          <origin xyz="0 0 0.075" rpy="0 0 0" />
+          	<geometry>
+            	<box size="0.01 0.01 0.10" />
+			</geometry>
+		</visual>	
+	</link>
+    
+    <joint name="elbow_joint" type="revolute">
+      <parent link="arm1"/>
+      <child link="arm2"/>
+      <origin xyz="0 0 0.150" rpy="0 0 0" />
+      <axis xyz="0 1 0"/>
+        <limit lower="-1.25" upper="1.25" />
+    </joint>
+    
+    <joint name="rot_joint" type="revolute">
+      <parent link="arm2"/>
+      <child link="tilt"/>
+      <origin xyz="0 0 0.15" rpy="0 0 0" />
+      <axis xyz="0 0 1"/>
+      <limit lower="-6" upper="6" />       
+    </joint>
+    
+    <joint name="tilt_joint" type="revolute">
+      <parent link="tilt"/>
+      <child link="top"/>
+      <origin xyz="0 0 0.0935" rpy="0 0 0" />
+      <axis xyz="0 1 0"/>
+      <limit lower="-1.832" upper="1.832" />       
+    </joint>
+    
+    <joint name="rot2_joint" type="revolute">
+      <parent link="top"/>
+      <child link="needle"/>
+      <origin xyz="0 0 0.254" rpy="0 0 0" />
+      <axis xyz="1 0 0"/>
+      <limit lower="-4" upper="4" />
+    </joint>
+    
+</robot>
