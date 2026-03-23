@@ -160,10 +160,21 @@ class ArmControlNode(Node):
     async def _do_park(self, stop_after=False):
         """Move each motor to park pose one at a time, then optionally stop."""
         self.get_logger().info('[PARK] Parking...')
-        # Move motors sequentially — 2 first since it holds the arm up
+        # Hold motor 4 at current position while other motors park
+        try:
+            raw4 = await asyncio.wait_for(
+                self.motor_controller.get_raw_motor_positions(4), timeout=2.0)
+            self.get_logger().info(f'[PARK] Holding motor 4 at raw={raw4:.4f}')
+            await self.motor_controller.set_motor_position(
+                4, raw4,
+                velocity_limit=PARK_VELOCITY_LIMIT,
+                accel_limit=PARK_ACCEL_LIMIT,
+                torque_limit=PARK_TORQUE_LIMIT)
+        except Exception as e:
+            self.get_logger().warn(f'[PARK] Could not hold motor 4: {e}')
+        # Park motors 2, 1, 3 first
         for motor_id, angle in [(2, PARK_POSE_DEG[2]),
                                   (1, PARK_POSE_DEG[1]),
-                                  (4, PARK_POSE_DEG[4]),
                                   (3, PARK_POSE_DEG[3])]:
             try:
                 await asyncio.wait_for(
@@ -176,6 +187,18 @@ class ArmControlNode(Node):
                 await asyncio.sleep(0.5)  # wait between each motor
             except asyncio.TimeoutError:
                 self.get_logger().error(f'[PARK] Motor {motor_id} timed out.')
+        # Now move motor 4 to park
+        try:
+            await asyncio.wait_for(
+                self.motor_controller.set_motor_angle(
+                    4, PARK_POSE_DEG[4],
+                    velocity_limit=PARK_VELOCITY_LIMIT,
+                    accel_limit=PARK_ACCEL_LIMIT,
+                    torque_limit=PARK_TORQUE_LIMIT),
+                timeout=PARK_TIMEOUT_PER_MOTOR)
+            await asyncio.sleep(0.5)
+        except asyncio.TimeoutError:
+            self.get_logger().error('[PARK] Motor 4 timed out.')
         self.get_logger().info('[PARK] Parked.')
         if stop_after:
             await asyncio.sleep(0.5)  # brief pause before cutting torque
