@@ -21,7 +21,7 @@ INTERMEDIATE_POSE_DEG = {1: 6.70,  2: -75.28, 3: -2.16, 4: -106.81}
 ORIGIN_POSE_DEG       = {1: 90.00, 2: -49.18, 3: 4.03,  4: 3.06}
 
 REF_X, REF_Y, REF_Z             = 0.20, 0.0, 0.24
-REF_M1, REF_M2, REF_M3, REF_M4 = 0.0, -45.0, 0.0, 0.0
+REF_M1, REF_M2, REF_M3, REF_M4 = 96.9, -45.0, 0.0, 0.0
 SCALE_M1_Y = 327.0
 SCALE_M2_Z = -450.0
 SCALE_M4_X = 0.0  # disabled until tuned
