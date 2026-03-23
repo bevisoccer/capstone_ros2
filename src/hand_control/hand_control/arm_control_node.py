@@ -14,7 +14,7 @@ MOTOR_TIMEOUTS = {1: 3.0, 2: 1.0, 3: 1.0, 4: 1.0}
 PARK_VELOCITY_LIMIT    = 0.25
 PARK_ACCEL_LIMIT       = 0.15
 PARK_TORQUE_LIMIT      = 6.0
-PARK_TIMEOUT_PER_MOTOR = 1.5
+PARK_TIMEOUT_PER_MOTOR = 3.0  # increased to give park time to complete
 
 PARK_POSE_DEG         = {1: 0.0,   2: 0.0,    3: 0.0,   4: 0.0}
 INTERMEDIATE_POSE_DEG = {1: 6.70,  2: -75.28, 3: -2.16, 4: -106.81}
@@ -158,33 +158,46 @@ class ArmControlNode(Node):
                 self.get_logger().info('[CMD] Resumed.')
 
     async def _do_park(self, stop_after=False):
+        """Move each motor to park pose one at a time, then optionally stop."""
         self.get_logger().info('[PARK] Parking...')
-        await self._move_to_pose_deg(
-            PARK_POSE_DEG, label='PARK',
-            velocity=PARK_VELOCITY_LIMIT,
-            accel=PARK_ACCEL_LIMIT,
-            torque=PARK_TORQUE_LIMIT,
-            timeout=PARK_TIMEOUT_PER_MOTOR)
+        # Move motors sequentially — 2 first since it holds the arm up
+        for motor_id, angle in [(2, PARK_POSE_DEG[2]),
+                                  (1, PARK_POSE_DEG[1]),
+                                  (4, PARK_POSE_DEG[4]),
+                                  (3, PARK_POSE_DEG[3])]:
+            try:
+                await asyncio.wait_for(
+                    self.motor_controller.set_motor_angle(
+                        motor_id, angle,
+                        velocity_limit=PARK_VELOCITY_LIMIT,
+                        accel_limit=PARK_ACCEL_LIMIT,
+                        torque_limit=PARK_TORQUE_LIMIT),
+                    timeout=PARK_TIMEOUT_PER_MOTOR)
+                await asyncio.sleep(0.5)  # wait between each motor
+            except asyncio.TimeoutError:
+                self.get_logger().error(f'[PARK] Motor {motor_id} timed out.')
         self.get_logger().info('[PARK] Parked.')
         if stop_after:
+            await asyncio.sleep(0.5)  # brief pause before cutting torque
             await self.motor_controller.stop_all()
+            self.get_logger().info('[PARK] Motors stopped.')
 
     async def _do_quit(self):
         await self._do_park(stop_after=True)
-        self.get_logger().info('[QUIT] Motors stopped.')
 
     def destroy_node(self):
-        """Called automatically by rclpy on shutdown — park then stop motors."""
+        """Park arm safely before shutting down."""
         if not self._shutdown:
             self._shutdown = True
             self.paused = True
             self.get_logger().info('[SHUTDOWN] Parking arm before exit...')
             future = asyncio.run_coroutine_threadsafe(
-                self._do_quit(), self._loop)
+                self._do_park(stop_after=True), self._loop)
             try:
                 future.result(timeout=30.0)
+                self.get_logger().info('[SHUTDOWN] Park complete, motors stopped.')
             except Exception as e:
-                self.get_logger().error(f'[SHUTDOWN] Park/stop failed: {e}')
+                self.get_logger().error(f'[SHUTDOWN] Park failed: {e}')
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5.0)
         super().destroy_node()
