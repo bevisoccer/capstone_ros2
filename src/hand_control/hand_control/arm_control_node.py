@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import asyncio
-import signal
 import threading
 import rclpy
 from rclpy.node import Node
@@ -21,7 +20,7 @@ PARK_POSE_DEG         = {1: 0.0,   2: 0.0,    3: 0.0,   4: 0.0}
 INTERMEDIATE_POSE_DEG = {1: 6.70,  2: -75.28, 3: -2.16, 4: -106.81}
 ORIGIN_POSE_DEG       = {1: 90.00, 2: -49.18, 3: 4.03,  4: 3.06}
 
-REF_X, REF_Y, REF_Z         = 0.20, 0.0, 0.24
+REF_X, REF_Y, REF_Z             = 0.20, 0.0, 0.24
 REF_M1, REF_M2, REF_M3, REF_M4 = 99.0, -53.0, 0.0, -17.0
 SCALE_M1_Y = 200.0
 SCALE_M2_Z = -200.0
@@ -69,8 +68,6 @@ class ArmControlNode(Node):
             RobotArmTarget, '/robot_arm_target', self._target_callback, 10)
         self.command_sub = self.create_subscription(
             String, '/arm_control_command', self._command_callback, 10)
-        signal.signal(signal.SIGINT,  self._sigterm_handler)
-        signal.signal(signal.SIGTERM, self._sigterm_handler)
         asyncio.run_coroutine_threadsafe(self._startup(), self._loop)
         self.get_logger().info('Arm control node started.')
 
@@ -106,7 +103,6 @@ class ArmControlNode(Node):
             except asyncio.TimeoutError:
                 self.get_logger().error(f'[LIFT] Motor 2 step {i} timed out.')
                 break
-        self.get_logger().info('[LIFT] Motor 2 lift complete.')
         motor4_zero = self.motor_controller.zero_offsets.get(4, 0.0)
         try:
             await asyncio.wait_for(
@@ -119,7 +115,6 @@ class ArmControlNode(Node):
         await self._move_to_pose_deg(INTERMEDIATE_POSE_DEG, label='LIFT',
                                       velocity=0.12, accel=0.08,
                                       torque=LIFT_TORQUE, timeout=5.0)
-        self.get_logger().info('[LIFT] Intermediate pose reached.')
         await self._move_to_pose_deg(ORIGIN_POSE_DEG, label='LIFT',
                                       velocity=0.12, accel=0.08,
                                       torque=LIFT_TORQUE, timeout=5.0)
@@ -178,29 +173,18 @@ class ArmControlNode(Node):
         await self._do_park(stop_after=True)
         self.get_logger().info('[QUIT] Motors stopped.')
 
-    def _sigterm_handler(self, signum, frame):
+    def destroy_node(self):
+        """Called automatically by rclpy on shutdown — park then stop motors."""
         if not self._shutdown:
             self._shutdown = True
             self.paused = True
-            self.get_logger().info('[SHUTDOWN] Parking (first Ctrl+C)...')
+            self.get_logger().info('[SHUTDOWN] Parking arm before exit...')
             future = asyncio.run_coroutine_threadsafe(
-                self._do_park(stop_after=False), self._loop)
+                self._do_quit(), self._loop)
             try:
                 future.result(timeout=30.0)
             except Exception as e:
-                self.get_logger().error(f'[SHUTDOWN] Park failed: {e}')
-        else:
-            self.get_logger().info('[SHUTDOWN] Stopping motors (second Ctrl+C)...')
-            future = asyncio.run_coroutine_threadsafe(self._do_quit(), self._loop)
-            try:
-                future.result(timeout=30.0)
-            except Exception as e:
-                self.get_logger().error(f'[SHUTDOWN] stop_all failed: {e}')
-            finally:
-                if rclpy.ok():
-                    rclpy.shutdown()
-
-    def destroy_node(self):
+                self.get_logger().error(f'[SHUTDOWN] Park/stop failed: {e}')
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5.0)
         super().destroy_node()
