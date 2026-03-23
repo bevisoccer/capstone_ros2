@@ -27,6 +27,8 @@ SCALE_M2_Z = -200.0
 SCALE_M4_X = -200.0
 
 _motion_in_progress = False
+_last_commanded = {1: None, 2: None, 3: None, 4: None}
+DEADBAND_DEG = 1.5  # ignore movements smaller than this
 
 async def move_robot_arm_to_pose(x, y, z, mc,
                                   velocity_limit=0.06,
@@ -42,6 +44,10 @@ async def move_robot_arm_to_pose(x, y, z, mc,
         m3 = max(-60.0,  min(60.0,  REF_M3))
         m4 = max(-120.0, min(120.0, REF_M4 + SCALE_M4_X * (x - REF_X)))
         for motor_id, angle in [(1, m1), (2, m2), (3, m3), (4, m4)]:
+            last = _last_commanded[motor_id]
+            if last is not None and abs(angle - last) < DEADBAND_DEG:
+                continue  # skip — movement too small
+            _last_commanded[motor_id] = angle
             try:
                 await asyncio.wait_for(
                     mc.set_motor_angle(motor_id, angle,
