@@ -12,9 +12,9 @@ class SafeTargetFilterNode(Node):
     def __init__(self):
         super().__init__('safe_target_filter_node')
         self.cx, self.cy, self.cz = 0.20, 0.0, 0.20
-        self.radius = 0.12
-        self.y_min, self.y_max = -0.10, 0.10
-        self.z_min, self.z_max = 0.18, 0.32
+        self.radius = 0.20
+        self.y_min, self.y_max = -0.20, 0.20
+        self.z_min, self.z_max = 0.15, 0.40
         self.max_cartesian_step = 0.006
         self.publish_rate_hz = 15.0
         self.latest_raw_target = None
