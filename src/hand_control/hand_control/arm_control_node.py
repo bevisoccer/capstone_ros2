@@ -16,9 +16,8 @@ PARK_ACCEL_LIMIT       = 0.15
 PARK_TORQUE_LIMIT      = 6.0
 PARK_TIMEOUT_PER_MOTOR = 3.0
 
-PARK_POSE_DEG         = {1: 0.0,   2: 0.0,    3: 0.0,   4: 0.0}
-INTERMEDIATE_POSE_DEG = {1: 6.70,  2: -75.28, 3: -2.16, 4: -106.81}
-ORIGIN_POSE_DEG       = {1: 90.00, 2: -49.18, 3: 4.03,  4: 3.06}
+PARK_POSE_RAW  = {1: -0.474, 2: -0.486, 3: -0.255, 4:  0.239}
+ORIGIN_POSE_RAW = {1: -0.218, 2: -0.351, 3: -0.515, 4: -0.061}
 
 REF_X, REF_Y, REF_Z             = 0.20, 0.0, 0.24
 REF_M1, REF_M2, REF_M3, REF_M4 = 0.0, -45.0, 0.0, 0.0
@@ -78,8 +77,7 @@ class ArmControlNode(Node):
         self.get_logger().info("Arm control node started.")
 
     async def _startup(self):
-        self.get_logger().info("[STARTUP] Calibrating zero offsets...")
-        await self.motor_controller.calibrate_zero_offsets()
+        self.get_logger().info("[STARTUP] Skipping calibration, using raw positions...")
         await self._do_startup_lift()
         self.get_logger().info("[STARTUP] Arm ready.")
 
@@ -176,13 +174,11 @@ class ArmControlNode(Node):
                 torque_limit=PARK_TORQUE_LIMIT)
         except Exception as e:
             self.get_logger().warn(f"[PARK] Could not hold motor 4: {e}")
-        for motor_id, angle in [(2, PARK_POSE_DEG[2]),
-                                  (1, PARK_POSE_DEG[1]),
-                                  (3, PARK_POSE_DEG[3])]:
+        for motor_id in [2, 1, 3]:
             try:
                 await asyncio.wait_for(
-                    self.motor_controller.set_motor_angle(
-                        motor_id, angle,
+                    self.motor_controller.set_motor_position(
+                        motor_id, PARK_POSE_RAW[motor_id],
                         velocity_limit=PARK_VELOCITY_LIMIT,
                         accel_limit=PARK_ACCEL_LIMIT,
                         torque_limit=PARK_TORQUE_LIMIT),
@@ -192,8 +188,8 @@ class ArmControlNode(Node):
                 self.get_logger().error(f"[PARK] Motor {motor_id} timed out.")
         try:
             await asyncio.wait_for(
-                self.motor_controller.set_motor_angle(
-                    4, PARK_POSE_DEG[4],
+                self.motor_controller.set_motor_position(
+                    4, PARK_POSE_RAW[4],
                     velocity_limit=PARK_VELOCITY_LIMIT,
                     accel_limit=PARK_ACCEL_LIMIT,
                     torque_limit=PARK_TORQUE_LIMIT),
