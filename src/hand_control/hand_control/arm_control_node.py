@@ -24,7 +24,9 @@ REF_X, REF_Y, REF_Z             = 0.20, 0.0, 0.24
 REF_M1, REF_M2, REF_M3, REF_M4 = 96.9, -45.0, 0.0, 0.0
 SCALE_M1_Y = 327.0
 SCALE_M2_Z = -450.0
-SCALE_M4_X = 0.0  # disabled until tuned
+SCALE_M2_X = -162.0   # x contribution to shoulder
+SCALE_M4_X =  237.0   # x contribution to wrist tilt
+REF_X_CAM  =  0.06    # camera x midpoint ((-0.115+0.236)/2)
 
 _motion_in_progress = False
 _last_commanded = {1: None, 2: None, 3: None, 4: None}
@@ -40,9 +42,10 @@ async def move_robot_arm_to_pose(x, y, z, mc,
     _motion_in_progress = True
     try:
         m1 = max(-180.0, min(180.0, REF_M1 + SCALE_M1_Y * (y - 0.0)))
-        m2 = max(-90.0,  min(30.0,  REF_M2 + SCALE_M2_Z * (z - 0.20)))
+        m2 = max(-90.0,  min(30.0,  REF_M2 + SCALE_M2_Z * (z - 0.20)
+                                          + SCALE_M2_X * (x - REF_X_CAM)))
         m3 = max(-60.0,  min(60.0,  REF_M3))
-        m4 = 0.0  # fixed until x mapping is tuned
+        m4 = max(-120.0, min(120.0, REF_M4 + SCALE_M4_X * (x - REF_X_CAM)))
         for motor_id, angle in [(1, m1), (2, m2), (3, m3), (4, m4)]:
             last = _last_commanded[motor_id]
             if last is not None and abs(angle - last) < DEADBAND_DEG:
