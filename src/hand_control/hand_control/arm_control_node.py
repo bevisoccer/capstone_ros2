@@ -14,20 +14,21 @@ MOTOR_TIMEOUTS = {1: 3.0, 2: 1.0, 3: 1.0, 4: 1.0}
 PARK_VELOCITY_LIMIT    = 0.25
 PARK_ACCEL_LIMIT       = 0.15
 PARK_TORQUE_LIMIT      = 6.0
-PARK_TIMEOUT_PER_MOTOR = 5.0
+PARK_TIMEOUT_PER_MOTOR = 3.0
 
-# Absolute raw positions — independent of zero offset drift
-PARK_POSE_RAW   = {1: -0.474, 2: -0.486, 3: -0.255, 4:  0.239}
-ORIGIN_POSE_RAW = {1: -0.218, 2: -0.351, 3: -0.515, 4: -0.061}
+PARK_POSE_DEG         = {1: 0.0,   2: 0.0,    3: 0.0,   4: 0.0}
+INTERMEDIATE_POSE_DEG = {1: 6.70,  2: -75.28, 3: -2.16, 4: -106.81}
+ORIGIN_POSE_DEG       = {1: 90.00, 2: -49.18, 3: 4.03,  4: 3.06}
 
 REF_X, REF_Y, REF_Z             = 0.20, 0.0, 0.24
-REF_M1, REF_M2, REF_M3, REF_M4 = 96.9, -45.0, 0.0, 0.0
+REF_M1, REF_M2, REF_M3, REF_M4 = 0.0, -45.0, 0.0, 0.0
 SCALE_M1_Y = 327.0
 SCALE_M2_Z = -450.0
+SCALE_M4_X = 0.0  # disabled until tuned
 
 _motion_in_progress = False
 _last_commanded = {1: None, 2: None, 3: None, 4: None}
-DEADBAND_DEG = 1.5
+DEADBAND_DEG = 1.5  # ignore movements smaller than this
 
 async def move_robot_arm_to_pose(x, y, z, mc,
                                   velocity_limit=0.06,
@@ -40,12 +41,12 @@ async def move_robot_arm_to_pose(x, y, z, mc,
     try:
         m1 = max(-180.0, min(180.0, REF_M1 + SCALE_M1_Y * (y - 0.0)))
         m2 = max(-90.0,  min(30.0,  REF_M2 + SCALE_M2_Z * (z - 0.20)))
-        m3 = 0.0
-        m4 = 0.0
+        m3 = max(-60.0,  min(60.0,  REF_M3))
+        m4 = 0.0  # fixed until x mapping is tuned
         for motor_id, angle in [(1, m1), (2, m2), (3, m3), (4, m4)]:
             last = _last_commanded[motor_id]
             if last is not None and abs(angle - last) < DEADBAND_DEG:
-                continue
+                continue  # skip — movement too small
             _last_commanded[motor_id] = angle
             try:
                 await asyncio.wait_for(
@@ -83,30 +84,19 @@ class ArmControlNode(Node):
         self.get_logger().info("[STARTUP] Arm ready.")
 
     async def _do_startup_lift(self):
-        LIFT_VELOCITY = 0.06
-        LIFT_ACCEL    = 0.04
-        LIFT_TORQUE   = 8.0
-
-        # Step 1 — lift motor 2 incrementally from park to origin
+        LIFT_DELTA, LIFT_VELOCITY, LIFT_ACCEL, LIFT_TORQUE = -0.18, 0.06, 0.04, 8.0
         self.get_logger().info("[LIFT] Lifting motor 2...")
         try:
             current_raw = await asyncio.wait_for(
                 self.motor_controller.get_raw_motor_positions(2), timeout=2.0)
         except asyncio.TimeoutError:
-            current_raw = PARK_POSE_RAW[2]
-            self.get_logger().warn("[LIFT] Motor 2 read timed out, using park raw.")
-
-        target_raw = ORIGIN_POSE_RAW[2]
-        delta = target_raw - current_raw
-        step_size = 0.02
-        step = step_size * (1 if delta > 0 else -1)
-        steps = int(abs(delta) / step_size) + 1
-        self.get_logger().info(f"[LIFT] Motor 2: {current_raw:.4f} -> {target_raw:.4f} ({steps} steps)")
-
+            current_raw = self.motor_controller.zero_offsets.get(2, 0.0)
+            self.get_logger().warn("[LIFT] Motor 2 read timed out, using offset.")
+        target_raw = current_raw + LIFT_DELTA
+        step = 0.02
+        steps = int(abs(LIFT_DELTA) / step) + 1
         for i in range(steps):
-            intermediate = current_raw + (i + 1) * step
-            if (step > 0 and intermediate > target_raw) or                (step < 0 and intermediate < target_raw):
-                intermediate = target_raw
+            intermediate = max(current_raw + (i + 1) * (-step), target_raw)
             try:
                 await asyncio.wait_for(
                     self.motor_controller.set_motor_position(
@@ -119,23 +109,37 @@ class ArmControlNode(Node):
             except asyncio.TimeoutError:
                 self.get_logger().error(f"[LIFT] Motor 2 step {i} timed out.")
                 break
-        self.get_logger().info("[LIFT] Motor 2 at origin raw position.")
+        motor4_zero = self.motor_controller.zero_offsets.get(4, 0.0)
+        try:
+            await asyncio.wait_for(
+                self.motor_controller.set_motor_position(
+                    4, motor4_zero,
+                    velocity_limit=0.10, accel_limit=0.08, torque_limit=LIFT_TORQUE),
+                timeout=5.0)
+        except asyncio.TimeoutError:
+            self.get_logger().error("[LIFT] Motor 4 home timed out.")
+        await self._move_to_pose_deg(INTERMEDIATE_POSE_DEG, label="LIFT",
+                                      velocity=0.12, accel=0.08,
+                                      torque=LIFT_TORQUE, timeout=5.0)
+        await self._move_to_pose_deg(ORIGIN_POSE_DEG, label="LIFT",
+                                      velocity=0.12, accel=0.08,
+                                      torque=LIFT_TORQUE, timeout=5.0)
+        self.get_logger().info("[LIFT] Origin pose reached.")
 
-        # Step 2 — move motors 1, 3, 4 to origin raw positions
-        for motor_id in [1, 3, 4]:
-            self.get_logger().info(f"[LIFT] Moving motor {motor_id} to origin...")
+    async def _move_to_pose_deg(self, pose_deg, label="MOVE",
+                                 velocity=0.12, accel=0.08,
+                                 torque=8.0, timeout=5.0):
+        for motor_id, angle in pose_deg.items():
             try:
                 await asyncio.wait_for(
-                    self.motor_controller.set_motor_position(
-                        motor_id, ORIGIN_POSE_RAW[motor_id],
-                        velocity_limit=LIFT_VELOCITY,
-                        accel_limit=LIFT_ACCEL,
-                        torque_limit=LIFT_TORQUE),
-                    timeout=8.0)
-                await asyncio.sleep(0.5)
+                    self.motor_controller.set_motor_angle(
+                        motor_id, angle,
+                        velocity_limit=velocity,
+                        accel_limit=accel,
+                        torque_limit=torque),
+                    timeout=timeout)
             except asyncio.TimeoutError:
-                self.get_logger().error(f"[LIFT] Motor {motor_id} timed out.")
-        self.get_logger().info("[LIFT] Origin pose reached.")
+                self.get_logger().error(f"[{label}] Motor {motor_id} timed out.")
 
     def _target_callback(self, msg):
         if self.paused or self._shutdown:
@@ -161,7 +165,6 @@ class ArmControlNode(Node):
 
     async def _do_park(self, stop_after=False):
         self.get_logger().info("[PARK] Parking...")
-        # Hold motor 4 at current position while others park
         try:
             raw4 = await asyncio.wait_for(
                 self.motor_controller.get_raw_motor_positions(4), timeout=2.0)
@@ -173,12 +176,13 @@ class ArmControlNode(Node):
                 torque_limit=PARK_TORQUE_LIMIT)
         except Exception as e:
             self.get_logger().warn(f"[PARK] Could not hold motor 4: {e}")
-        # Park motors 2, 1, 3 first
-        for motor_id in [2, 1, 3]:
+        for motor_id, angle in [(2, PARK_POSE_DEG[2]),
+                                  (1, PARK_POSE_DEG[1]),
+                                  (3, PARK_POSE_DEG[3])]:
             try:
                 await asyncio.wait_for(
-                    self.motor_controller.set_motor_position(
-                        motor_id, PARK_POSE_RAW[motor_id],
+                    self.motor_controller.set_motor_angle(
+                        motor_id, angle,
                         velocity_limit=PARK_VELOCITY_LIMIT,
                         accel_limit=PARK_ACCEL_LIMIT,
                         torque_limit=PARK_TORQUE_LIMIT),
@@ -186,11 +190,10 @@ class ArmControlNode(Node):
                 await asyncio.sleep(0.5)
             except asyncio.TimeoutError:
                 self.get_logger().error(f"[PARK] Motor {motor_id} timed out.")
-        # Now move motor 4 to park
         try:
             await asyncio.wait_for(
-                self.motor_controller.set_motor_position(
-                    4, PARK_POSE_RAW[4],
+                self.motor_controller.set_motor_angle(
+                    4, PARK_POSE_DEG[4],
                     velocity_limit=PARK_VELOCITY_LIMIT,
                     accel_limit=PARK_ACCEL_LIMIT,
                     torque_limit=PARK_TORQUE_LIMIT),
