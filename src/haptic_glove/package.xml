@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>haptic_glove</name>
+  <version>0.0.1</version>
+  <description>BLE haptic glove node for capstone teleoperation</description>
+  <maintainer email="bdacosta@andrew.cmu.edu">bevisoccer</maintainer>
+  <license>MIT</license>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
