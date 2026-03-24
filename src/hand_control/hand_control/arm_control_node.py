@@ -24,9 +24,9 @@ REF_X, REF_Y, REF_Z             = 0.20, 0.0, 0.24
 REF_M1, REF_M2, REF_M3, REF_M4 = 96.9, -45.0, 0.0, 0.0
 SCALE_M1_Y = 327.0
 SCALE_M2_Z = -450.0
-SCALE_M2_X = -162.0   # x contribution to shoulder
-SCALE_M4_X =  237.0   # x contribution to wrist tilt
-REF_X_CAM  =  0.06    # camera x midpoint ((-0.115+0.236)/2)
+SCALE_M2_X = -146.0   # x contribution to shoulder (-56.9/0.39)
+SCALE_M4_X =  213.0   # x contribution to wrist tilt (83.3/0.39)
+REF_X_CAM  =  0.215   # camera x midpoint ((0.02+0.41)/2)
 
 _motion_in_progress = False
 _last_commanded = {1: None, 2: None, 3: None, 4: None}
