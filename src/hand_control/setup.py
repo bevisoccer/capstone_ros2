@@ -20,6 +20,9 @@ setup(
         'console_scripts': [
             'arm_control_node = hand_control.arm_control_node:main',
             'safe_target_filter_node = hand_control.safe_target_filter_node:main',
+            'wrist_keyboard_node = hand_control.wrist_keyboard_node:main',
+            'hand_node = hand_control.hand_node:main',
+            'haptic_bridge_node = hand_control.haptic_bridge_node:main',
         ],
     },
 )

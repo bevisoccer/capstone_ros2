@@ -11,13 +11,15 @@ def clamp(value, lo, hi):
 class SafeTargetFilterNode(Node):
     def __init__(self):
         super().__init__('safe_target_filter_node')
-        self.cx, self.cy, self.cz = 0.20, 0.0, 0.20
-        self.radius = 0.20
-        self.y_min, self.y_max = -0.20, 0.20
-        self.z_min, self.z_max = 0.15, 0.40
+
+        # Simple box workspace limits — tune these to your physical workspace
+        self.x_min, self.x_max = 0.20, 0.60   # front/back (depth)
+        self.y_min, self.y_max = -0.25, 0.25   # left/right
+        self.z_min, self.z_max = 0.10, 0.55    # up/down — expanded from 0.40
+
         self.max_cartesian_step = 0.006
-        self.publish_rate_hz = 15.0
-        self.latest_raw_target = None
+        self.publish_rate_hz    = 15.0
+        self.latest_raw_target  = None
         self.current_safe_target = None
         self.has_received_target = False
         self.paused = False
@@ -31,19 +33,11 @@ class SafeTargetFilterNode(Node):
             String, '/arm_control_command', self._command_callback, 10)
         self.get_logger().info('Safe target filter node started.')
 
-    def clamp_to_half_hemisphere(self, x, y, z):
+    def clamp_to_box(self, x, y, z):
+        x = clamp(x, self.x_min, self.x_max)
         y = clamp(y, self.y_min, self.y_max)
         z = clamp(z, self.z_min, self.z_max)
-        x = max(x, self.cx)
-        dx, dy, dz = x - self.cx, y - self.cy, z - self.cz
-        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-        if dist > self.radius and dist > 1e-9:
-            scale = self.radius / dist
-            dx, dy, dz = dx*scale, dy*scale, dz*scale
-        x, y, z = self.cx+dx, self.cy+dy, self.cz+dz
-        y = clamp(y, self.y_min, self.y_max)
-        z = clamp(z, self.z_min, self.z_max)
-        return max(x, self.cx), y, z
+        return x, y, z
 
     def _command_callback(self, msg):
         cmd = msg.data.strip().lower()
@@ -60,7 +54,7 @@ class SafeTargetFilterNode(Node):
         if not all(math.isfinite(v) for v in [msg.x, msg.y, msg.z]):
             self.get_logger().warn('Rejected non-finite target')
             return
-        x, y, z = self.clamp_to_half_hemisphere(msg.x, msg.y, msg.z)
+        x, y, z = self.clamp_to_box(msg.x, msg.y, msg.z)
         clamped = RobotArmTarget()
         clamped.x, clamped.y, clamped.z = float(x), float(y), float(z)
         self.latest_raw_target = clamped
@@ -85,7 +79,7 @@ class SafeTargetFilterNode(Node):
         next_target.x = self.current_safe_target.x + dx * scale
         next_target.y = self.current_safe_target.y + dy * scale
         next_target.z = self.current_safe_target.z + dz * scale
-        x, y, z = self.clamp_to_half_hemisphere(next_target.x, next_target.y, next_target.z)
+        x, y, z = self.clamp_to_box(next_target.x, next_target.y, next_target.z)
         next_target.x, next_target.y, next_target.z = float(x), float(y), float(z)
         DEADBAND = 0.0005
         if (abs(next_target.x - self.current_safe_target.x) > DEADBAND or

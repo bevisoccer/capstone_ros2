@@ -19,6 +19,7 @@ setup(
     entry_points={
         "console_scripts": [
             "glove_node = haptic_glove.glove_node:main",
+            "calib_log_buffer_node = haptic_glove.calib_log_buffer_node:main",
         ],
     },
 )

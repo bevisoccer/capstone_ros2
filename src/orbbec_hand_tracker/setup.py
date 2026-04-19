@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'orbbec_hand_tracker_node = orbbec_hand_tracker.orbbec_hand_tracker_node:main',
+            'glove_tracker_node = orbbec_hand_tracker.glove_tracker_node:main',
         ],
     },
 )
