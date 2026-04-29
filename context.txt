@@ -1,0 +1,18 @@
+Project: Robotic arm glove teleoperation (capstone)
+
+ROS2 Humble on NVIDIA Jetson. A 5-motor robot arm controlled by an Orbbec depth camera tracking a gloved hand via MediaPipe. 4 nodes: orbbec_camera → glove_tracker_node → safe_target_filter_node → arm_control_node. Run with ros2 launch capstone_bringup glove_test.launch.py.
+
+Motor roles: M1=shoulder rotate (left/right), M2=shoulder lift (up/down), M3=forearm rotate (locked), M4=elbow (reach + height coordination), M5=wrist pitch (auto + keyboard trim)
+
+Key calibration (arm_control_node.py):
+
+    All constants are absolute moteus raw positions (revolutions)
+    M1 and M2 both had encoder reset bugs (moteus loses ±0.5 rev reference when unpowered while arm falls flat). M1 fixed by −0.5, M2 fixed by +0.5 — this is why M2 constants are positive despite original calibration being negative
+    M2 positive direction = arm lifts UP. RAW_LIMITS[2]=(0.0179, 0.2159), ORIGIN=0.1862
+    M4 must be left free (not locked) during startup lift because it's table-constrained when arm is flat — it gets tucked to 0.16 AFTER M2 lifts
+
+Startup sequence: clear faults (stop_all) → read park pose → lock M1/M5 → lift M2 → tuck M4 → move all to origin → 3s delay → enable tracking
+
+Ongoing calibration need: At neutral hand height (arm_z≈0.24m), M2 maps to ~0.091, which is near the lower end of its range. The user needs to raise their hand above neutral to see upward M2 movement. HEIGHT_Z_MIN/MAX may need recalibration to center the arm's working range on the user's natural hand position.
+
+Build: colcon build --packages-select hand_control && source install/setup.bash
