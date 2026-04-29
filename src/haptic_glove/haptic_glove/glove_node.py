@@ -9,15 +9,15 @@ Publishes:
 Subscribes:
   /glove/servo_cmd    (std_msgs/Int32MultiArray)  — servo positions 0-1000, 5 elements
                                                     [thumb, index, middle, ring, pinky]
+  /glove/command      (std_msgs/String)           — 'lock' | 'free' | 'haptics_on' | 'haptics_off'
 
-On first connect a two-step calibration runs automatically:
-  1. Hold hand OPEN  for 3 s  → records open  (0 %) reference per finger
-  2. Hold hand CLOSED for 3 s → records closed (100 %) reference per finger
+Lock behaviour:
+  Finger at 0% (open)    → servo cmd 1000 (free)
+  Finger at 75% (curled) → servo cmd  250
+  Finger at 100%(closed) → servo cmd    0 (taut)
 """
 
 import asyncio
-import json
-import os
 import subprocess
 import threading
 
@@ -25,7 +25,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import Int32MultiArray, Float32MultiArray, String
-from std_msgs.msg import Bool
 
 from bleak import BleakScanner, BleakClient
 
@@ -35,39 +34,26 @@ NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
 FINGER_NAMES = ["thumb", "index", "middle", "ring", "pinky"]
 
-# Fallback limits used before/if calibration is skipped
-_DEFAULT_OPEN   = [2600, 2600, 2600, 2600, 2600]
-_DEFAULT_CLOSED = [4000, 4000, 4000, 4000, 4000]
-
-CALIB_HOLD_SECS   = 5.0   # seconds to hold each position
-CALIB_COUNTDOWN   = 5     # countdown seconds before sampling starts
-
-SERVO_SETTLE_SECS =10.0 # seconds to wait after commanding servos before reading pots
-
-CALIB_FILE = os.path.expanduser("~/.ros/glove_calibration.json")
-
-
-def _make_limits(open_vals, closed_vals):
-    """Build per-finger [open_raw, closed_raw] from calibration samples."""
-    limits = {}
-    for i, name in enumerate(FINGER_NAMES):
-        op = open_vals[i]
-        cl = closed_vals[i]
-        if abs(cl - op) < 50:
-            cl = op + 50
-        limits[name] = [op, cl]
-    return limits
+# ── Per-finger limits [open_adc, closed_adc] ─────────────────────────────────
+# Tune these to match the physical glove's potentiometer range.
+#   open_adc   = raw ADC when finger is fully extended (string slack)
+#   closed_adc = raw ADC when finger is fully curled   (string taut)
+FINGER_LIMITS = {
+    "thumb":  [2100, 4095],
+    "index":  [1100, 3700],
+    "middle": [2300, 4095],
+    "ring":   [1900, 4095],
+    "pinky":  [2050, 4095],
+}
 
 
-def map_to_pct(raw, finger, limits):
-    """Map raw ADC to 0.0 (open) – 1.0 (closed), respecting sensor direction."""
-    op, cl = limits[finger]
-    lo = min(op, cl)
-    hi = max(op, cl)
+def map_to_pct(raw: int, finger: str) -> float:
+    """Map raw ADC to 0.0 (open) – 1.0 (closed) using FINGER_LIMITS."""
+    lo, hi = FINGER_LIMITS[finger]
+    if lo > hi:
+        lo, hi = hi, lo
     raw = max(lo, min(raw, hi))
-    if cl == op:
-        return 0.0
-    return max(0.0, min(1.0, (raw - op) / (cl - op)))
+    return (raw - lo) / (hi - lo) if hi != lo else 0.0
 
 
 def parse_raw_line(line):
@@ -92,17 +78,13 @@ class GloveNode(Node):
         self.declare_parameter("device_name",       DEVICE_NAME)
         self.declare_parameter("publish_rate_hz",   50.0)
         self.declare_parameter("heartbeat_rate_hz", 5.0)
-        self.declare_parameter("skip_calibration",  False)
 
-        self._device_name    = self.get_parameter("device_name").value
-        self._pub_period     = 1.0 / self.get_parameter("publish_rate_hz").value
-        self._hb_period      = 1.0 / self.get_parameter("heartbeat_rate_hz").value
-        self._skip_calib     = self.get_parameter("skip_calibration").value
+        self._device_name = self.get_parameter("device_name").value
+        self._pub_period  = 1.0 / self.get_parameter("publish_rate_hz").value
+        self._hb_period   = 1.0 / self.get_parameter("heartbeat_rate_hz").value
 
-        self._pub_raw         = self.create_publisher(Int32MultiArray,   "/glove/finger_raw", 10)
-        self._pub_pct         = self.create_publisher(Float32MultiArray, "/glove/finger_pct", 10)
-        self._pub_arm_cmd     = self.create_publisher(String, "/arm_control_command", 10)
-        self._pub_calibrating = self.create_publisher(Bool, "/glove/calibrating", 10)
+        self._pub_raw = self.create_publisher(Int32MultiArray,   "/glove/finger_raw", 10)
+        self._pub_pct = self.create_publisher(Float32MultiArray, "/glove/finger_pct", 10)
         self._sub_servo = self.create_subscription(
             Int32MultiArray, "/glove/servo_cmd", self._servo_cmd_cb, 10)
         self._sub_cmd = self.create_subscription(
@@ -111,19 +93,12 @@ class GloveNode(Node):
         self._lock            = threading.Lock()
         self._raw_values      = [0] * 5
         self._servo_values    = [1000] * 5
-        self._haptics_enabled = False   # set True via /glove/command 'haptics_on'
+        self._haptics_enabled = False   # toggled via /glove/command 'haptics_on/off'
         self._rx_buf          = ""
-        self._calibrated      = False
-        self._limits          = _make_limits(_DEFAULT_OPEN, _DEFAULT_CLOSED)
 
-        # Servo-pot calibration: pot readings at servo cmd 0 and 1000
-        self._pot_at_cmd0    = None   # list of 5 ints, set after servo calib
-        self._pot_at_cmd1000 = None   # list of 5 ints, set after servo calib
-        self._servo_calib_done = False
-
-        self._ble_client  = None
-        self._stop_event  = asyncio.Event()
-        self._ble_loop    = asyncio.new_event_loop()
+        self._ble_client = None
+        self._stop_event = asyncio.Event()
+        self._ble_loop   = asyncio.new_event_loop()
 
         self._pub_timer = self.create_timer(self._pub_period, self._publish_fingers)
 
@@ -136,11 +111,8 @@ class GloveNode(Node):
 
     def _publish_fingers(self):
         with self._lock:
-            if not self._calibrated:
-                return
-            raw    = list(self._raw_values)
-            limits = dict(self._limits)
-        pct = [map_to_pct(raw[i], FINGER_NAMES[i], limits) for i in range(5)]
+            raw = list(self._raw_values)
+        pct = [map_to_pct(raw[i], FINGER_NAMES[i]) for i in range(5)]
         raw_msg = Int32MultiArray()
         raw_msg.data = raw
         self._pub_raw.publish(raw_msg)
@@ -163,7 +135,6 @@ class GloveNode(Node):
         cmd = msg.data.strip().lower()
         if cmd == 'lock':
             self.lock_at_current_position()
-            self.get_logger().info('[GLOVE] Locked at current position.')
         elif cmd == 'free':
             with self._lock:
                 self._servo_values = [1000] * 5
@@ -176,6 +147,30 @@ class GloveNode(Node):
             with self._lock:
                 self._servo_values = [1000] * 5
             self.get_logger().info('[GLOVE] Haptics disabled — servos freed.')
+
+    # ── Lock ───────────────────────────────────────────────────────────────────
+
+    def lock_at_current_position(self):
+        """
+        Command each servo to the position matching the finger's current curl.
+        Uses FINGER_LIMITS to map raw ADC → 0.0–1.0, then inverts to servo cmd:
+          0%  (open)   → cmd 1000 (free)
+          75% (curled) → cmd  250
+          100%(closed) → cmd    0 (taut)
+        """
+        with self._lock:
+            raw = list(self._raw_values)
+
+        cmds = []
+        for i, name in enumerate(FINGER_NAMES):
+            pct = map_to_pct(raw[i], name)
+            cmd = max(0, min(1000, int((1.0 - pct) * 1000)))
+            cmds.append(cmd)
+            self.get_logger().info(
+                f"[GLOVE] Lock {name}: raw={raw[i]}  pct={pct:.2f}  → cmd={cmd}")
+
+        with self._lock:
+            self._servo_values = cmds
 
     # ── BLE thread ─────────────────────────────────────────────────────────────
 
@@ -222,177 +217,6 @@ class GloveNode(Node):
                     return False
         return False
 
-    # ── Calibration ────────────────────────────────────────────────────────────
-
-    async def _collect_samples(self, duration_secs):
-        """Collect raw finger samples for `duration_secs` and return averages."""
-        samples = []
-        deadline = self._ble_loop.time() + duration_secs
-        while self._ble_loop.time() < deadline:
-            with self._lock:
-                samples.append(list(self._raw_values))
-            await asyncio.sleep(0.05)  # 20 Hz sampling
-        if not samples:
-            return [0] * 5
-        return [int(sum(s[i] for s in samples) / len(samples)) for i in range(5)]
-
-    def _save_servo_calib(self):
-        data = {"pot_at_cmd0": self._pot_at_cmd0, "pot_at_cmd1000": self._pot_at_cmd1000}
-        try:
-            os.makedirs(os.path.dirname(CALIB_FILE), exist_ok=True)
-            with open(CALIB_FILE, "w") as f:
-                json.dump(data, f, indent=2)
-            self.get_logger().info(f"[CALIB] Servo calib saved to {CALIB_FILE}")
-        except Exception as e:
-            self.get_logger().warn(f"[CALIB] Could not save servo calib: {e}")
-
-    def _load_servo_calib(self) -> bool:
-        if not os.path.exists(CALIB_FILE):
-            return False
-        try:
-            with open(CALIB_FILE) as f:
-                data = json.load(f)
-            with self._lock:
-                self._pot_at_cmd0      = data["pot_at_cmd0"]
-                self._pot_at_cmd1000   = data["pot_at_cmd1000"]
-                self._servo_calib_done = True
-            self.get_logger().info(f"[CALIB] Servo calib loaded from {CALIB_FILE}")
-            return True
-        except Exception as e:
-            self.get_logger().warn(f"[CALIB] Could not load servo calib: {e}")
-            return False
-
-    def _cprint(self, msg=""):
-        print(msg, flush=True)
-
-    def _arm_pause(self):
-        msg = String(); msg.data = 'pause'
-        self._pub_arm_cmd.publish(msg)
-        cal = Bool(); cal.data = True
-        self._pub_calibrating.publish(cal)
-
-    def _arm_resume(self):
-        msg = String(); msg.data = 'resume'
-        self._pub_arm_cmd.publish(msg)
-        cal = Bool(); cal.data = False
-        self._pub_calibrating.publish(cal)
-
-    async def _run_calibration(self):
-        """Servo-pot sweep (once, skipped if saved), then open/closed finger calibration (always)."""
-        self._arm_pause()
-        self.get_logger().info("[CALIB] Arm paused for calibration.")
-
-        with self._lock:
-            self._servo_values = [1000] * 5
-
-        self._cprint("\n" + "="*50)
-        self._cprint("  GLOVE CALIBRATION")
-        self._cprint("="*50)
-
-        # Servo-pot sweep — skip if already loaded from file
-        if not self._servo_calib_done:
-            await self._run_servo_calibration()
-        else:
-            self._cprint("\n  [Servo-pot calibration loaded from file — skipping sweep]")
-
-        # Servos free before finger calibration
-        with self._lock:
-            self._servo_values = [1000] * 5
-
-        # ── Step 1: open hand ──────────────────────────────────────────────────
-        self._cprint(f"\n  Step 1/2 — OPEN your hand fully")
-        for i in range(CALIB_COUNTDOWN, 0, -1):
-            self._cprint(f"  Sampling in {i}...")
-            await asyncio.sleep(1.0)
-        self._cprint("  Sampling OPEN position...")
-        open_vals = await self._collect_samples(CALIB_HOLD_SECS)
-        self._cprint(f"  Open  raw: {open_vals}")
-
-        # ── Step 2: closed hand ────────────────────────────────────────────────
-        self._cprint(f"\n  Step 2/2 — CLOSE your hand fully (make a fist)")
-        for i in range(CALIB_COUNTDOWN, 0, -1):
-            self._cprint(f"  Sampling in {i}...")
-            await asyncio.sleep(1.0)
-        self._cprint("  Sampling CLOSED position...")
-        closed_vals = await self._collect_samples(CALIB_HOLD_SECS)
-        self._cprint(f"  Closed raw: {closed_vals}")
-
-        # ── Apply finger limits ────────────────────────────────────────────────
-        new_limits = _make_limits(open_vals, closed_vals)
-        with self._lock:
-            self._limits     = new_limits
-            self._calibrated = True
-
-        self._cprint("\n  Finger calibration complete:")
-        for name in FINGER_NAMES:
-            op, cl = new_limits[name]
-            self._cprint(f"    {name:8s}  open={op}  closed={cl}")
-        self._cprint("="*50 + "\n")
-        self.get_logger().info("[CALIB] Finger calibration applied.")
-        self._arm_resume()
-        self.get_logger().info("[CALIB] Arm resumed.")
-
-    # ── Servo-pot calibration & lock ──────────────────────────────────────────
-
-    async def _run_servo_calibration(self):
-        """Sweep all servos to 0 then 1000, record pot readings at each extreme."""
-        self._cprint("\n  [Servo-pot calibration — automated, do not move fingers]")
-
-        # Command all servos to 0 (locked/taut), wait for settle
-        with self._lock:
-            self._servo_values = [0] * 5
-        self._cprint("  Servos → 0, settling...")
-        await asyncio.sleep(SERVO_SETTLE_SECS)
-        pot_at_0 = await self._collect_samples(1.0)
-        self._cprint(f"  pot@0   : {pot_at_0}")
-
-        # Command all servos to 1000 (free), wait for settle
-        with self._lock:
-            self._servo_values = [1000] * 5
-        self._cprint("  Servos → 1000, settling...")
-        await asyncio.sleep(SERVO_SETTLE_SECS)
-        pot_at_1000 = await self._collect_samples(1.0)
-        self._cprint(f"  pot@1000: {pot_at_1000}")
-
-        with self._lock:
-            self._pot_at_cmd0    = pot_at_0
-            self._pot_at_cmd1000 = pot_at_1000
-            self._servo_calib_done = True
-
-        self._cprint("  Servo-pot calibration done.\n")
-        self._save_servo_calib()
-
-    def lock_at_current_position(self):
-        """
-        Command each servo to the position that matches the current pot reading.
-        Holds the spool at the finger's current curl without adding tension.
-        """
-        with self._lock:
-            if not self._servo_calib_done:
-                self.get_logger().warn("[GLOVE] Lock ignored — servo calibration not done yet.")
-                return
-            raw    = list(self._raw_values)
-            at0    = list(self._pot_at_cmd0)
-            at1000 = list(self._pot_at_cmd1000)
-
-        cmds = []
-        for i in range(5):
-            span = at1000[i] - at0[i]
-            if abs(span) < 20:
-                self.get_logger().warn(f"[GLOVE] Finger {i} ({FINGER_NAMES[i]}): pot span too small ({span}), skipping lock.")
-                cmds.append(self._servo_values[i])
-                continue
-            cmd = int((raw[i] - at0[i]) / span * 1000)
-            cmd = max(0, min(1000, cmd))
-            cmds.append(cmd)
-            self.get_logger().info(
-                f"[GLOVE] Lock {FINGER_NAMES[i]}: pot={raw[i]}  at0={at0[i]}  at1000={at1000[i]}  → cmd={cmd}")
-
-        with self._lock:
-            self._servo_values = cmds
-
-    # ── Heartbeat / main BLE loop ──────────────────────────────────────────────
-
     async def _heartbeat_loop(self, client):
         while not self._stop_event.is_set():
             with self._lock:
@@ -413,7 +237,6 @@ class GloveNode(Node):
             self.get_logger().warn(f"[BLE] Adapter reset failed: {e}")
 
     async def _ble_main(self):
-        first_connect = True
         scan_failures = 0
         while rclpy.ok():
             self._stop_event.clear()
@@ -433,7 +256,6 @@ class GloveNode(Node):
                 continue
             scan_failures = 0
             self.get_logger().info(f"[BLE] Found: {device.name}  [{device.address}]")
-            # Brief pause so BlueZ can release any stale notify from a prior session
             await asyncio.sleep(1.0)
             try:
                 async with BleakClient(device, disconnected_callback=self._on_ble_disconnect) as client:
@@ -448,28 +270,13 @@ class GloveNode(Node):
 
                     self._ble_client = client
                     self.get_logger().info("[BLE] Connected and ready.")
-                    # Try to stop any stale notify before subscribing
                     try:
                         await client.stop_notify(NUS_TX_UUID)
                     except Exception:
                         pass
                     await asyncio.sleep(0.3)
                     await client.start_notify(NUS_TX_UUID, self._on_notify)
-
-                    # Load servo calib from file if available (once-only calibration).
-                    # Finger open/close calibration always runs unless skip_calibration=true.
-                    if first_connect:
-                        first_connect = False
-                        self._load_servo_calib()
-                        if not self._skip_calib:
-                            hb_task    = asyncio.create_task(self._heartbeat_loop(client))
-                            calib_task = asyncio.create_task(self._run_calibration())
-                            await calib_task
-                            await hb_task
-                        else:
-                            await self._heartbeat_loop(client)
-                    else:
-                        await self._heartbeat_loop(client)
+                    await self._heartbeat_loop(client)
                     try:
                         await client.stop_notify(NUS_TX_UUID)
                     except Exception:
@@ -487,6 +294,22 @@ class GloveNode(Node):
 
     def destroy_node(self):
         self.get_logger().info("Shutting down GloveNode...")
+
+        # Free all servos while the BLE connection is still open.
+        # Schedule the write on the BLE loop from this (ROS) thread and wait
+        # for it to complete before tearing down the loop.
+        with self._lock:
+            self._servo_values = [1000] * 5
+        if self._ble_client is not None:
+            future = asyncio.run_coroutine_threadsafe(
+                self._safe_write(self._ble_client, format_haptic([1000] * 5)),
+                self._ble_loop,
+            )
+            try:
+                future.result(timeout=1.0)
+            except Exception:
+                pass
+
         self._stop_event.set()
         self._ble_loop.call_soon_threadsafe(self._ble_loop.stop)
         self._ble_thread.join(timeout=3.0)
