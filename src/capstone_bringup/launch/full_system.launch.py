@@ -57,14 +57,6 @@ def generate_launch_description():
         name='calib_log_buffer',
         output='screen',
     )
-    wrist_keyboard = Node(
-        package='hand_control',
-        executable='wrist_keyboard_node',
-        name='wrist_keyboard_node',
-        output='screen',
-        prefix='xterm -e',
-        additional_env={'DISPLAY': ':0'},
-    )
     return LaunchDescription([
         orbbec_launch,
         orbbec_hand_tracker,
@@ -74,5 +66,4 @@ def generate_launch_description():
         glove_node,
         haptic_bridge,
         calib_log_buffer,
-        wrist_keyboard,
     ])

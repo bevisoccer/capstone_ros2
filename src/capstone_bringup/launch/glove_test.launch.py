@@ -20,12 +20,6 @@ def generate_launch_description():
         output='screen',
         additional_env={'DISPLAY': ':0'},
     )
-    safe_target_filter = Node(
-        package='hand_control',
-        executable='safe_target_filter_node',
-        name='safe_target_filter_node',
-        output='screen',
-    )
     arm_control = Node(
         package='hand_control',
         executable='arm_control_node',
@@ -33,14 +27,7 @@ def generate_launch_description():
         output='screen',
         sigterm_timeout='60',   # park takes ~10s — give plenty of room
         sigkill_timeout='30',
-    )
-    wrist_keyboard = Node(
-        package='hand_control',
-        executable='wrist_keyboard_node',
-        name='wrist_keyboard_node',
-        output='screen',
-        prefix='xterm -display :0 -e',
-        additional_env={'DISPLAY': ':0'},
+        remappings=[('/robot_arm_target', '/raw_robot_arm_target')],
     )
     hand_node = Node(
         package='hand_control',
@@ -52,8 +39,6 @@ def generate_launch_description():
     return LaunchDescription([
         orbbec_launch,
         glove_tracker,
-        safe_target_filter,
         arm_control,
-        wrist_keyboard,
         hand_node,
     ])

@@ -24,25 +24,15 @@ async def hold_current_pose(mc: MoteusMotorController):
 
 
 async def print_joint_positions(mc: MoteusMotorController):
-    print("\nCurrent joint positions relative to calibrated zero:")
+    print("\nCurrent raw positions:")
     for motor_id in sorted(mc.controllers.keys()):
         raw = await mc.get_raw_motor_positions(motor_id)
-        zero = mc.zero_offsets.get(motor_id, 0.0)
-        rel_deg = (raw - zero) * 360.0
-        print(
-            f"  Motor {motor_id}: "
-            f"raw={raw:.4f}, zero={zero:.4f}, relative={rel_deg:.2f} deg"
-        )
+        print(f"  M{motor_id}: {raw:.4f}")
 
 
 async def main():
     mc = MoteusMotorController(MOTOR_IDS)
 
-    print("[INFO] Calibrating zero offsets from CURRENT pose...")
-    print("[INFO] Put the arm in your neutral/reference pose before continuing.\n")
-    input("Press Enter when ready...")
-
-    await mc.calibrate_zero_offsets()
     await print_joint_positions(mc)
 
     print("\nCommands:")
