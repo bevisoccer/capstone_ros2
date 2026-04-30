@@ -57,8 +57,9 @@ TRACKING_START_DELAY = 3   # seconds to wait at origin before accepting tracking
 # ── Height (Z) → M2 mapping ───────────────────────────────────────────────────
 # arm_z (hand up/down) controls M2 (shoulder lift).
 # Matches safe_target_filter z_min/z_max.
-HEIGHT_Z_MIN = 0.10   # arm_z — hand at lowest position
-HEIGHT_Z_MAX = 0.45   # arm_z — tracker publishes up to 0.50, filter allows 0.55
+HEIGHT_Z_MIN     = 0.10   # arm_z — hand at lowest position
+HEIGHT_Z_NEUTRAL = 0.24   # arm_z — calibrated neutral (must map to ORIGIN_POSE_RAW[2])
+HEIGHT_Z_MAX     = 0.45   # arm_z — tracker publishes up to 0.50, filter allows 0.55
 HEIGHT_M2_LOW_RAW  =  0.0512  # M2 raw when arm is low  (hard min)
 HEIGHT_M2_HIGH_RAW =  0.2159  # M2 raw when arm is raised
 
@@ -113,10 +114,15 @@ def clamp_raw(motor_id, raw_pos):
 
 
 def arm_z_to_m2_raw(arm_z):
-    """Map hand height (arm_z) to M2 raw position (shoulder lift)."""
-    t  = (arm_z - HEIGHT_Z_MIN) / (HEIGHT_Z_MAX - HEIGHT_Z_MIN)
-    t  = max(0.0, min(1.0, t))
-    m2 = HEIGHT_M2_LOW_RAW + t * (HEIGHT_M2_HIGH_RAW - HEIGHT_M2_LOW_RAW)
+    """Map hand height (arm_z) to M2 raw. Piecewise so neutral hand → ORIGIN_POSE_RAW[2]."""
+    if arm_z >= HEIGHT_Z_NEUTRAL:
+        t  = (arm_z - HEIGHT_Z_NEUTRAL) / (HEIGHT_Z_MAX - HEIGHT_Z_NEUTRAL)
+        t  = max(0.0, min(1.0, t))
+        m2 = ORIGIN_POSE_RAW[2] + t * (HEIGHT_M2_HIGH_RAW - ORIGIN_POSE_RAW[2])
+    else:
+        t  = (HEIGHT_Z_NEUTRAL - arm_z) / (HEIGHT_Z_NEUTRAL - HEIGHT_Z_MIN)
+        t  = max(0.0, min(1.0, t))
+        m2 = ORIGIN_POSE_RAW[2] - t * (ORIGIN_POSE_RAW[2] - HEIGHT_M2_LOW_RAW)
     return clamp_raw(2, m2)
 
 
@@ -168,11 +174,15 @@ _pending_target     = None   # tuple (x, y, z) or None
 _pending_lock       = threading.Lock()
 
 
-async def _tracking_loop(mc):
+async def _tracking_loop(mc, node):
     """Consume the latest pending target at up to 20 Hz. Never queues stale positions."""
     global _last_arm_z, _pending_target
     while True:
         await asyncio.sleep(0.05)   # 20 Hz poll
+        if node.paused:
+            with _pending_lock:
+                _pending_target = None   # drain without acting — prevents stale jump on resume
+            continue
         with _pending_lock:
             target = _pending_target
             _pending_target = None
@@ -227,7 +237,7 @@ class ArmControlNode(Node):
             String, "/arm_control_command", self._command_callback, 10)
         asyncio.run_coroutine_threadsafe(self._startup(), self._loop)
         asyncio.run_coroutine_threadsafe(self._keepalive(), self._loop)
-        asyncio.run_coroutine_threadsafe(_tracking_loop(self.motor_controller), self._loop)
+        asyncio.run_coroutine_threadsafe(_tracking_loop(self.motor_controller, self), self._loop)
         self.get_logger().info("Arm control node started.")
 
     async def _keepalive(self):
@@ -527,8 +537,8 @@ class ArmControlNode(Node):
 
     async def _do_go_home(self):
         """Move arm to HOME tracking position for recalibration."""
-        home_m2 = arm_z_to_m2_raw(0.24)   # HOME_Z
-        home_m4 = arm_x_to_m4_raw(0.35)   # HOME_X
+        home_m2 = arm_z_to_m2_raw(HEIGHT_Z_NEUTRAL)   # = ORIGIN_POSE_RAW[2]
+        home_m4 = arm_x_to_m4_raw(0.35)               # HOME_X
         home_m1 = arm_y_to_m1_raw(0.0)   # HOME_Y=0 → M1 center
         home_m5 = clamp_raw(5, 0.0)
         targets = [(1, home_m1), (2, home_m2), (4, home_m4), (5, home_m5)]

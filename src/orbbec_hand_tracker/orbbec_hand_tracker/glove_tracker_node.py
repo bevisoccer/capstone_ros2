@@ -598,7 +598,7 @@ class GloveTrackerNode(Node):
         self._gest_fired     = gesture
         self._gest_fired_age = 60
         self.get_logger().info(f'[GESTURE] {gesture}')
-        if cmd == 'hand_open' and not self._calibrating:
+        if cmd == 'hand_open' and not self._calibrating and self._hand_cv_enabled:
             msg = Float32MultiArray()
             msg.data = [0.0, 0.0, 0.0, 0.0, 0.0]
             self.pub_curl.publish(msg)
@@ -687,6 +687,8 @@ class GloveTrackerNode(Node):
                   '1/2: wrist up/dn',
                   '3/4: elbow out/in',
                   '5/6: palm cw/ccw',
+                  'G: open hand',
+                  'H: close hand',
                   'P: pause arm',
                   'O: pause hand',
                   'L: hand estop',
@@ -803,17 +805,33 @@ class GloveTrackerNode(Node):
 
 KEY_DEBOUNCE_S = 0.15   # minimum seconds between same key firing
 
+_PLACEHOLDER = None
+
+def _make_placeholder():
+    global _PLACEHOLDER
+    img = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.putText(img, 'Waiting for camera...', (160, 220),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 255), 2)
+    cv2.putText(img, 'G=open hand   H=close hand', (170, 270),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
+    cv2.putText(img, 'SPACE=calibrate   Q=quit', (185, 300),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
+    cv2.putText(img, '(click this window to capture keys)', (150, 340),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 120, 120), 1)
+    _PLACEHOLDER = img
+
+
 def main():
     rclpy.init()
     node = GloveTrackerNode()
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
+    _make_placeholder()
     _key_last = {}
     try:
         while rclpy.ok() and not node._quit:
             frame = node.get_display_frame()
-            if frame is not None:
-                cv2.imshow('Glove Tracker', frame)
+            cv2.imshow('Glove Tracker', frame if frame is not None else _PLACEHOLDER)
             key = cv2.waitKey(16) & 0xFF   # ~60 Hz, main thread owns the window
             if key != 0xFF:
                 now = time.monotonic()

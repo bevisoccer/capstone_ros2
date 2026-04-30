@@ -45,12 +45,14 @@ def generate_launch_description():
         executable='glove_node',
         name='glove_node',
         output='screen',
+        parameters=[{'skip_calibration': True}],
     )
     haptic_bridge = Node(
         package='hand_control',
         executable='haptic_bridge_node',
         name='haptic_bridge_node',
         output='screen',
+        parameters=[{'haptics_enabled': True}],
     )
     calib_log_buffer = Node(
         package='haptic_glove',

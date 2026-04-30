@@ -105,6 +105,8 @@ class GloveNode(Node):
             Int32MultiArray, "/glove/servo_cmd", self._servo_cmd_cb, 10)
         self._sub_cmd = self.create_subscription(
             String, "/glove/command", self._command_cb, 10)
+        self._sub_lock_cmd = self.create_subscription(
+            Int32MultiArray, "/glove/lock_cmd", self._lock_cmd_cb, 10)
 
         self._lock            = threading.Lock()
         self._raw_values      = [0] * 5
@@ -114,10 +116,10 @@ class GloveNode(Node):
         self._calibrated      = False
         self._limits          = _make_limits(_DEFAULT_OPEN, _DEFAULT_CLOSED)
 
-        # Servo-pot calibration: pot readings at servo cmd 0 and 1000
-        self._pot_at_cmd0    = None   # list of 5 ints, set after servo calib
-        self._pot_at_cmd1000 = None   # list of 5 ints, set after servo calib
-        self._servo_calib_done = False
+        # Servo-pot calibration: pot readings at servo cmd 0 (taut=closed) and 1000 (free=open)
+        self._pot_at_cmd0    = list(_DEFAULT_CLOSED)
+        self._pot_at_cmd1000 = list(_DEFAULT_OPEN)
+        self._servo_calib_done = True
 
         self._ble_client  = None
         self._stop_event  = asyncio.Event()
@@ -154,6 +156,19 @@ class GloveNode(Node):
         with self._lock:
             if self._haptics_enabled:
                 self._servo_values = [max(0, min(1000, int(v))) for v in msg.data[:5]]
+
+    def _lock_cmd_cb(self, msg: Int32MultiArray):
+        """0=free, 1=lock at current position, per finger."""
+        if len(msg.data) < 5:
+            return
+        if not self._haptics_enabled:
+            return
+        for i in range(5):
+            if msg.data[i]:
+                self.lock_at_current_position_per_finger(i)
+            else:
+                with self._lock:
+                    self._servo_values[i] = 1000
 
     # ── Commands ───────────────────────────────────────────────────────────────
 
@@ -378,6 +393,29 @@ class GloveNode(Node):
 
         with self._lock:
             self._servo_values = cmds
+
+    def lock_at_current_position_per_finger(self, finger_index):
+        """Lock a single finger's servo at current pot position."""
+        with self._lock:
+            if not self._servo_calib_done:
+                self.get_logger().warn("[GLOVE] Lock ignored — servo calibration not done yet.")
+                return
+            raw    = self._raw_values[finger_index]
+            at0    = self._pot_at_cmd0[finger_index]
+            at1000 = self._pot_at_cmd1000[finger_index]
+        span = at1000 - at0
+        if abs(span) < 20:
+            self.get_logger().warn(
+                f"[GLOVE] Finger {finger_index} ({FINGER_NAMES[finger_index]}): "
+                f"pot span too small ({span}), skipping lock.")
+            return
+        cmd = int((raw - at0) / span * 1000)
+        cmd = max(0, min(1000, cmd))
+        self.get_logger().info(
+            f"[GLOVE] Lock {FINGER_NAMES[finger_index]}: "
+            f"pot={raw}  at0={at0}  at1000={at1000}  → cmd={cmd}")
+        with self._lock:
+            self._servo_values[finger_index] = cmd
 
     # ── Heartbeat / main BLE loop ──────────────────────────────────────────────
 
