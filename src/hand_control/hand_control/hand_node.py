@@ -66,8 +66,9 @@ class HandNode(Node):
         self._closed_angle = self.get_parameter("closed_angle").value
 
         # Publishers
-        self._pub_fsr_pct    = self.create_publisher(Float32MultiArray, "/hand/fsr_pct",    10)
-        self._pub_fsr_raw    = self.create_publisher(Int32MultiArray,   "/hand/fsr_raw",    10)
+        self._pub_fsr_pct     = self.create_publisher(Float32MultiArray, "/hand/fsr_pct",     10)
+        self._pub_fsr_raw     = self.create_publisher(Int32MultiArray,   "/hand/fsr_raw",     10)
+        self._pub_fsr_pressed = self.create_publisher(Int32MultiArray,   "/hand/fsr_pressed", 10)
         self._pub_current_ma = self.create_publisher(Float32MultiArray, "/hand/current_ma", 10)
         self._pub_power_mw   = self.create_publisher(Float32MultiArray, "/hand/power_mw",   10)
 
@@ -85,6 +86,7 @@ class HandNode(Node):
         self._lock         = threading.Lock()
         self._fsr_pct      = [0.0] * 5
         self._fsr_raw      = [0]   * 5
+        self._fsr_pressed  = [0]   * 5
         self._current_ma   = [0.0] * 5
         self._power_mw     = [0.0] * 5
 
@@ -136,8 +138,9 @@ class HandNode(Node):
         if idx is None:
             return
         with self._lock:
-            if "pct"    in fields: self._fsr_pct[idx] = float(fields["pct"])
-            if "raw"    in fields: self._fsr_raw[idx] = int(fields["raw"])
+            if "pct"     in fields: self._fsr_pct[idx]     = float(fields["pct"])
+            if "raw"     in fields: self._fsr_raw[idx]     = int(fields["raw"])
+            if "pressed" in fields: self._fsr_pressed[idx] = int(fields["pressed"])
 
     def _on_ina(self, fields: dict):
         """Called by HandController for every INA219 reading."""
@@ -158,8 +161,9 @@ class HandNode(Node):
 
     def _publish_all(self):
         with self._lock:
-            fsr_pct    = list(self._fsr_pct)
-            fsr_raw    = list(self._fsr_raw)
+            fsr_pct     = list(self._fsr_pct)
+            fsr_raw     = list(self._fsr_raw)
+            fsr_pressed = list(self._fsr_pressed)
             current_ma = list(self._current_ma)
             power_mw   = list(self._power_mw)
 
@@ -170,6 +174,10 @@ class HandNode(Node):
         msg_fsr_raw = Int32MultiArray()
         msg_fsr_raw.data = fsr_raw
         self._pub_fsr_raw.publish(msg_fsr_raw)
+
+        msg_fsr_pressed = Int32MultiArray()
+        msg_fsr_pressed.data = fsr_pressed
+        self._pub_fsr_pressed.publish(msg_fsr_pressed)
 
         msg_current = Float32MultiArray()
         msg_current.data = current_ma

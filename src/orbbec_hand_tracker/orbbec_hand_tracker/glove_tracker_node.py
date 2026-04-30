@@ -271,6 +271,8 @@ class GloveTrackerNode(Node):
 
     def __init__(self):
         super().__init__('glove_tracker_node')
+        self.declare_parameter('hand_cv_enabled', True)
+        self._hand_cv_enabled = self.get_parameter('hand_cv_enabled').value
         self.bridge = CvBridge()
         self.hands  = mp_hands.Hands(
             static_image_mode=False,
@@ -464,9 +466,10 @@ class GloveTrackerNode(Node):
         # Finger curl from landmarks
         raw_curls = compute_finger_curl(lm)
         smooth_curls = [self.oef_curl[i](raw_curls[i], now) for i in range(5)]
-        curl_msg = Float32MultiArray()
-        curl_msg.data = smooth_curls
-        self.pub_curl.publish(curl_msg)
+        if self._hand_cv_enabled:
+            curl_msg = Float32MultiArray()
+            curl_msg.data = smooth_curls
+            self.pub_curl.publish(curl_msg)
         return smooth_curls
 
 
@@ -551,6 +554,14 @@ class GloveTrackerNode(Node):
             self._send_arm('elbow_in')
         elif key == ord(']'):
             self._send_arm('elbow_out')
+        elif key == ord('h') or key == ord('H'):
+            msg = Float32MultiArray()
+            msg.data = [1.0, 1.0, 1.0, 1.0, 1.0]
+            self.pub_curl.publish(msg)
+        elif key == ord('g') or key == ord('G'):
+            msg = Float32MultiArray()
+            msg.data = [0.0, 0.0, 0.0, 0.0, 0.0]
+            self.pub_curl.publish(msg)
         elif key == ord('q') or key == ord('Q'):
             self._send_arm('quit')
             time.sleep(2.0)   # ensure message delivered before ROS shuts down

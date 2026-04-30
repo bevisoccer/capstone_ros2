@@ -19,6 +19,7 @@ def generate_launch_description():
         name='glove_tracker_node',
         output='screen',
         additional_env={'DISPLAY': ':0'},
+        parameters=[{'hand_cv_enabled': False}],
     )
     safe_target_filter = Node(
         package='hand_control',

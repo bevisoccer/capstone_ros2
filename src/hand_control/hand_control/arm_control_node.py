@@ -33,11 +33,11 @@ MOTOR_TIMEOUTS = {1: 3.0, 2: 2.0, 3: 2.0, 4: 2.0, 5: 2.0}
 
 # Origin pose in raw units
 ORIGIN_POSE_RAW = {
-    1:  0.0334,
-    2:  0.1862,
+    1:  0.0215,
+    2:  0.1930,
     3: -0.5031,   # palm down — locked, never moves during teleop
-    4:  0.1031,
-    5: -0.0199,
+    4:  0.0191,
+    5: -0.0505,
 }
 
 PARK_POSE_RAW = {}  # set dynamically at startup
@@ -392,10 +392,10 @@ class ArmControlNode(Node):
         except asyncio.TimeoutError:
             self.get_logger().error("[LIFT] M2 final origin timed out.")
 
-        # Step 6 — pre-position to tracking home so M4/M2 don't jump on first tracking command
-        self.get_logger().info("[LIFT] Pre-positioning to tracking home (HOME_X=0.35, HOME_Z=0.24)...")
-        home_m4 = arm_x_to_m4_raw(0.35)   # HOME_X midpoint → M4 extended to home reach
-        home_m2 = arm_z_to_m2_raw(0.24)   # HOME_Z → M2 home height
+        # Step 6 — pre-position to origin so M4/M2 don't jump on first tracking command
+        self.get_logger().info("[LIFT] Pre-positioning to origin...")
+        home_m4 = ORIGIN_POSE_RAW[4]
+        home_m2 = ORIGIN_POSE_RAW[2]
         for motor_id, raw in [(4, home_m4), (2, home_m2)]:
             try:
                 await asyncio.wait_for(

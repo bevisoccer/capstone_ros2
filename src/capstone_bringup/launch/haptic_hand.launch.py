@@ -13,13 +13,14 @@ def generate_launch_description():
         executable='hand_node',
         name='hand_node',
         output='screen',
-        parameters=[{'serial_port': '/dev/ttyACM1'}],
+        parameters=[{'serial_port': 'auto'}],
     )
     haptic_bridge = Node(
         package='hand_control',
         executable='haptic_bridge_node',
         name='haptic_bridge_node',
         output='screen',
+        parameters=[{'haptics_enabled': True}],
     )
     return LaunchDescription([
         glove_node,

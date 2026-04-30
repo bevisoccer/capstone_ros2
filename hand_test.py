@@ -111,11 +111,11 @@ def main():
         else:
             print("  o=open all  c=close all  1-5=curl finger  ENTER=open last  s=sensors  q=quit")
 
-    print("Opening and disconnecting...")
+    print("Closing and disconnecting...")
     for finger in FINGER_NAMES:
-        ctrl.move_finger_curve1(finger, OPEN_ANGLE)
+        ctrl.move_finger_curve1(finger, CLOSED_ANGLE)
         if finger != "thumb":
-            ctrl.move_finger_curve2(finger, OPEN_ANGLE)
+            ctrl.move_finger_curve2(finger, CLOSED_ANGLE)
     time.sleep(2.0)
     ctrl.disconnect()
     print("Done.")

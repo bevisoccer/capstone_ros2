@@ -35,14 +35,12 @@ NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
 FINGER_NAMES = ["thumb", "index", "middle", "ring", "pinky"]
 
-# Fallback limits used before/if calibration is skipped
-_DEFAULT_OPEN   = [2600, 2600, 2600, 2600, 2600]
-_DEFAULT_CLOSED = [4000, 4000, 4000, 4000, 4000]
+# Tested limits from haptics-feedback branch — used when skip_calibration=true
+_DEFAULT_OPEN   = [2100, 1100, 2300, 1900, 2050]
+_DEFAULT_CLOSED = [4095, 3700, 4095, 4095, 4095]
 
 CALIB_HOLD_SECS   = 5.0   # seconds to hold each position
 CALIB_COUNTDOWN   = 5     # countdown seconds before sampling starts
-
-SERVO_SETTLE_SECS =10.0 # seconds to wait after commanding servos before reading pots
 
 CALIB_FILE = os.path.expanduser("~/.ros/glove_calibration.json")
 
@@ -278,7 +276,7 @@ class GloveNode(Node):
         self._pub_calibrating.publish(cal)
 
     async def _run_calibration(self):
-        """Servo-pot sweep (once, skipped if saved), then open/closed finger calibration (always)."""
+        """Open/closed finger calibration."""
         self._arm_pause()
         self.get_logger().info("[CALIB] Arm paused for calibration.")
 
@@ -288,16 +286,6 @@ class GloveNode(Node):
         self._cprint("\n" + "="*50)
         self._cprint("  GLOVE CALIBRATION")
         self._cprint("="*50)
-
-        # Servo-pot sweep — skip if already loaded from file
-        if not self._servo_calib_done:
-            await self._run_servo_calibration()
-        else:
-            self._cprint("\n  [Servo-pot calibration loaded from file — skipping sweep]")
-
-        # Servos free before finger calibration
-        with self._lock:
-            self._servo_values = [1000] * 5
 
         # ── Step 1: open hand ──────────────────────────────────────────────────
         self._cprint(f"\n  Step 1/2 — OPEN your hand fully")
@@ -456,11 +444,8 @@ class GloveNode(Node):
                     await asyncio.sleep(0.3)
                     await client.start_notify(NUS_TX_UUID, self._on_notify)
 
-                    # Load servo calib from file if available (once-only calibration).
-                    # Finger open/close calibration always runs unless skip_calibration=true.
                     if first_connect:
                         first_connect = False
-                        self._load_servo_calib()
                         if not self._skip_calib:
                             hb_task    = asyncio.create_task(self._heartbeat_loop(client))
                             calib_task = asyncio.create_task(self._run_calibration())
