@@ -190,16 +190,22 @@ class HandState:
             s.last_update = time.time()
 
     def update_fsr(self, fields: dict):
-        ch = int(fields.get("ch", -1))
+        try:
+            ch = int(fields.get("ch", -1))
+        except (TypeError, ValueError):
+            return
         if ch < 0: return
         with self._lock:
             s = self.fsr.setdefault(ch, FsrStatus(ch=ch, label="", finger=""))
             if "label"   in fields: s.label   = fields["label"]
             if "finger"  in fields: s.finger  = fields["finger"]
-            if "pin"     in fields: s.pin     = int(fields["pin"])
-            if "raw"     in fields: s.raw     = int(fields["raw"])
-            if "scaled"  in fields: s.scaled  = int(fields["scaled"])
-            if "pct"     in fields: s.pct     = float(fields["pct"])
+            try:
+                if "pin"     in fields: s.pin     = int(fields["pin"])
+                if "raw"     in fields: s.raw     = int(fields["raw"])
+                if "scaled"  in fields: s.scaled  = int(fields["scaled"])
+                if "pct"     in fields: s.pct     = float(fields["pct"])
+            except (TypeError, ValueError) as e:
+                log.warning(f"FSR parse error ch={ch}: {e}  fields={fields}")
             if "pressed" in fields: s.pressed = fields["pressed"] == "1"
             if "pending" in fields: s.pending = fields["pending"] == "1"
             s.last_update = time.time()
@@ -288,7 +294,7 @@ class SerialReader(threading.Thread):
                 log.error(f"SerialReader: port error: {e}")
                 self._stop.set()
             except Exception as e:
-                log.warning(f"SerialReader: unexpected error: {e}")
+                log.warning(f"SerialReader: unexpected error: {e}  raw={raw!r}")
 
     def _dispatch(self, msg_type: str, fields: dict, raw_line: str):
         s = self._state

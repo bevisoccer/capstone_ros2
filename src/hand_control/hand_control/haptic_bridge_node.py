@@ -33,7 +33,7 @@ import threading
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray, Int32MultiArray
+from std_msgs.msg import Float32MultiArray, Int32MultiArray, String
 
 FINGER_NAMES = ['thumb', 'index', 'middle', 'ring', 'pinky']
 
@@ -74,8 +74,9 @@ class HapticBridgeNode(Node):
         self._gain            = self.get_parameter('finger_gain').value
         self._haptics_enabled = self.get_parameter('haptics_enabled').value
 
-        self._pub_hand   = self.create_publisher(Float32MultiArray, '/hand/finger_cmd', 10)
-        self._pub_haptic = self.create_publisher(Int32MultiArray,   '/glove/servo_cmd', 10)
+        self._pub_hand    = self.create_publisher(Float32MultiArray, '/hand/finger_cmd', 10)
+        self._pub_haptic  = self.create_publisher(Int32MultiArray,   '/glove/servo_cmd', 10)
+        self._pub_glove_cmd = self.create_publisher(String,          '/glove/command',   10)
 
         self._sub_glove = self.create_subscription(
             Float32MultiArray, '/glove/finger_pct', self._glove_cb, 10)
@@ -89,10 +90,24 @@ class HapticBridgeNode(Node):
         haptic_period = 1.0 / self.get_parameter('haptic_rate_hz').value
         self._haptic_timer = self.create_timer(haptic_period, self._haptic_cb)
 
+        # Tell glove_node to accept servo commands if haptics are enabled at launch.
+        # One-shot timer fires after 1s (glove_node may still be connecting via BLE).
+        self._startup_timer = None
+        if self._haptics_enabled:
+            self._startup_timer = self.create_timer(1.0, self._send_haptics_on)
+
         self.get_logger().info(
             f'HapticBridgeNode started  '
             f'finger_gain={self._gain}  haptics_enabled={self._haptics_enabled}  '
             f'haptic_rate_hz={1.0/haptic_period:.0f}')
+
+    def _send_haptics_on(self):
+        msg = String(); msg.data = 'haptics_on'
+        self._pub_glove_cmd.publish(msg)
+        self.get_logger().info('[BRIDGE] Sent haptics_on to glove_node.')
+        if self._startup_timer is not None:
+            self._startup_timer.cancel()
+            self._startup_timer = None
 
     # ── Forward path: glove → hand ────────────────────────────────────────────
 

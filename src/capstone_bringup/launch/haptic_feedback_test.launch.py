@@ -44,13 +44,14 @@ def generate_launch_description():
             'haptic_rate_hz':       20.0,
             'finger_gain':          1.5,
             # ── FSR lock thresholds (0.0 – 100.0 %) ──────────────────────────
-            # Tune here or at runtime:
-            #   ros2 param set /haptic_bridge_node fsr_threshold_<finger> <val>
-            'fsr_threshold_thumb':  10.0,
-            'fsr_threshold_index':  10.0,
-            'fsr_threshold_middle': 10.0,
-            'fsr_threshold_ring':   10.0,
-            'fsr_threshold_pinky':  10.0,
+            # Set per-finger to just above each sensor's resting noise level.
+            # Tune here or live without restarting:
+            #   ros2 param set /haptic_bridge_node fsr_threshold_index 15.0
+            'fsr_threshold_thumb':  10.0,   # tune me
+            'fsr_threshold_index':  10.0,   # tune me
+            'fsr_threshold_middle': 10.0,   # tune me
+            'fsr_threshold_ring':   10.0,   # tune me
+            'fsr_threshold_pinky':  10.0,   # tune me
         }],
     )
 
