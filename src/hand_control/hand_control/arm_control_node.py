@@ -14,11 +14,11 @@ except ImportError:
 MOTOR_IDS = [1, 2, 3, 4, 5]
 
 RAW_LIMITS = {
-    1: (-0.2171,  0.2091),
-    2: ( 0.0512,  0.2159),   # M2 min raised to 0.0512
-    3: (-0.7531, -0.2531),  # ±90° from locked pose
-    4: (-0.1539,  0.0443),   # M4 hard limits from measurement
-    5: (-0.40,  0.15),
+    1: (-0.2010,  0.2913),   # left → right
+    2: (-0.2193,  0.0150),   # up → down (more negative = higher)
+    3: (-0.2463,  0.2254),   # left twist → right twist
+    4: (-0.2918, -0.0288),   # tucked → extended
+    5: (-0.3451, -0.0189),   # down → up
 }
 
 ANGLE_LIMITS = {
@@ -33,11 +33,11 @@ MOTOR_TIMEOUTS = {1: 3.0, 2: 2.0, 3: 2.0, 4: 2.0, 5: 2.0}
 
 # Origin pose in raw units
 ORIGIN_POSE_RAW = {
-    1:  0.0215,
-    2:  0.1930,
-    3: -0.5031,   # palm down — locked, never moves during teleop
-    4:  0.0191,
-    5: -0.0505,
+    1:  0.0329,
+    2: -0.0778,
+    3: -0.0082,   # palm down — locked, never moves during teleop
+    4: -0.0233,
+    5: -0.1012,
 }
 
 PARK_POSE_RAW = {}  # set dynamically at startup
@@ -50,7 +50,7 @@ PARK_TORQUE_LIMIT      = 6.0    # M1/M3/M4/M5
 PARK_M2_TORQUE         = 15.0   # M2 needs full torque to resist gravity during descent
 PARK_TIMEOUT_PER_MOTOR = 8.0
 
-M4_TUCK_RAW = 0.0443   # M4 tuck — clamped to new hard limit
+M4_TUCK_RAW = -0.2200  # M4 tuck — elbow pulled in before M2 lowers during park
 
 TRACKING_START_DELAY = 3   # seconds to wait at origin before accepting tracking targets
 
@@ -60,24 +60,24 @@ TRACKING_START_DELAY = 3   # seconds to wait at origin before accepting tracking
 HEIGHT_Z_MIN     = 0.10   # arm_z — hand at lowest position
 HEIGHT_Z_NEUTRAL = 0.24   # arm_z — calibrated neutral (must map to ORIGIN_POSE_RAW[2])
 HEIGHT_Z_MAX     = 0.45   # arm_z — tracker publishes up to 0.50, filter allows 0.55
-HEIGHT_M2_LOW_RAW  =  0.0512  # M2 raw when arm is low  (hard min)
-HEIGHT_M2_HIGH_RAW =  0.2159  # M2 raw when arm is raised
+HEIGHT_M2_LOW_RAW  =  0.0150  # M2 raw when arm is low (table)
+HEIGHT_M2_HIGH_RAW = -0.2193  # M2 raw when arm is raised (more negative = higher)
 
 # ── Depth (X) → M4 mapping ────────────────────────────────────────────────────
 # arm_x (hand front/back depth) controls M4 (elbow reach).
 # Matches safe_target_filter x_min/x_max.
 REACH_X_MIN = 0.20   # arm_x — hand closest to camera
 REACH_X_MAX = 0.50   # arm_x — hand farthest (~80cm depth, tracker realistic max)
-REACH_M4_NEAR_RAW = -0.1539  # M4 raw when hand is close (arm extended)
-REACH_M4_FAR_RAW  =  0.0443  # M4 raw when hand is far   (arm tucked)
+REACH_M4_NEAR_RAW = -0.0288  # M4 raw when hand is close (arm extended/down)
+REACH_M4_FAR_RAW  = -0.2918  # M4 raw when hand is far   (arm tucked/up)
 
 # ── Height (Z) → M4 coordination ──────────────────────────────────────────────
-HEIGHT_M4_Z_LOW_RAW  = 0.0227  # M4 raw when arm is at Z_MIN (arm low)
-HEIGHT_M4_Z_HIGH_RAW = 0.0074  # M4 raw when arm is at Z_MAX
+HEIGHT_M4_Z_LOW_RAW  = -0.0233  # M4 raw when arm is at Z_MIN — matches origin, needs tuning
+HEIGHT_M4_Z_HIGH_RAW = -0.0233  # M4 raw when arm is at Z_MAX — matches origin, needs tuning
 
 # ── M4 dynamic max based on M2 height ─────────────────────────────────────────
-M4_MAX_AT_M2_LOW  = 0.0443  # M4 safe max when M2 is at its lowest (hard limit)
-M4_MAX_AT_M2_HIGH = 0.0443  # M4 safe max when M2 is at its highest (hard limit)
+M4_MAX_AT_M2_LOW  = -0.0288  # M4 safe max (extended limit) when M2 is at its lowest
+M4_MAX_AT_M2_HIGH = -0.0288  # M4 safe max (extended limit) when M2 is at its highest
 
 # ── Left/right (Y) mapping ─────────────────────────────────────────────────────
 # M1 maps hand lateral position
@@ -88,8 +88,8 @@ CAM_X_MAX = 0.8   # right edge
 
 # ── Wrist compensation from height (Z) ────────────────────────────────────────
 # Arm low (near table) → wrist pitched down; arm high → wrist level
-HEIGHT_M5_LOW_RAW  =  0.0130  # raw — wrist when arm is low
-HEIGHT_M5_HIGH_RAW = -0.0199  # raw — wrist when arm is raised
+HEIGHT_M5_LOW_RAW  = -0.1300  # raw — wrist when arm is low
+HEIGHT_M5_HIGH_RAW = -0.0700  # raw — wrist when arm is raised
 
 # Wrist manual offset — controlled by keyboard W/S
 _wrist_offset_raw = 0.0
@@ -100,7 +100,7 @@ _elbow_raw  = None   # set to home pre-position after startup
 ELBOW_STEP  = 0.02
 
 # Palm rotation (M3) absolute position — controlled by keyboard 5/6
-_m3_raw  = -0.5031   # starts at locked pose
+_m3_raw  = -0.0082   # starts at locked pose
 M3_STEP  = 0.02
 
 
@@ -581,9 +581,9 @@ class ArmControlNode(Node):
         await self._wait_until_settled({4: M4_TUCK_RAW})
         await asyncio.sleep(1.5)  # hard wait — ensure M4 fully tucked before M2 lowers
 
-        # Step 2 — move M1/M5 to park pose; return M3 to exact startup position (no clamp)
-        m1_target = clamp_raw(1, PARK_POSE_RAW.get(1, 0.0))
-        m5_target = clamp_raw(5, PARK_POSE_RAW.get(5, 0.0))
+        # Step 2 — move M1/M5/M3 to exact park pose (no clamp — park may be outside op limits)
+        m1_target = PARK_POSE_RAW.get(1, ORIGIN_POSE_RAW[1])
+        m5_target = PARK_POSE_RAW.get(5, ORIGIN_POSE_RAW[5])
         m3_target = PARK_POSE_RAW.get(3, 0.0)
         for motor_id, raw in [(1, m1_target), (5, m5_target)]:
             try:
@@ -618,7 +618,7 @@ class ArmControlNode(Node):
 
         # Always lower to the absolute floor so M2 is resting on the table before stop_all.
         # Use full torque — velocity/accel already limit speed; low torque causes gravity-drop.
-        target = RAW_LIMITS[2][0]   # 0.0512 — physical low stop
+        target = RAW_LIMITS[2][1]   # physical low/table stop (high raw = arm down)
         step   = 0.01               # fine steps for gentle lowering
 
         direction = 1 if target > current else -1

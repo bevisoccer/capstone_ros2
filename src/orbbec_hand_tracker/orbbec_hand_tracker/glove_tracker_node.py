@@ -36,7 +36,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 from hand_interfaces.msg import RobotArmTarget
-from std_msgs.msg import Float32MultiArray, String
+from std_msgs.msg import Float32MultiArray, String, Bool
 
 # ── Glove color adjustments ────────────────────────────────────────────────────
 HUE_OFFSET = 179
@@ -292,10 +292,11 @@ class GloveTrackerNode(Node):
         self.oef_y = OneEuroFilter()
         self.oef_z = OneEuroFilter()
 
-        self.pub      = self.create_publisher(RobotArmTarget,   'raw_robot_arm_target', 10)
-        self.pub_curl = self.create_publisher(Float32MultiArray, '/hand/finger_cmd',    10)
-        self.pub_cmd  = self.create_publisher(String,            '/arm_control_command', 10)
-        self.pub_hand = self.create_publisher(String,            '/hand/command',        10)
+        self.pub       = self.create_publisher(RobotArmTarget,   'raw_robot_arm_target', 10)
+        self.pub_curl  = self.create_publisher(Float32MultiArray, '/hand/finger_cmd',    10)
+        self.pub_cmd   = self.create_publisher(String,            '/arm_control_command', 10)
+        self.pub_hand  = self.create_publisher(String,            '/hand/command',        10)
+        self.pub_glove = self.create_publisher(String,            '/glove/command',       10)
         self._tracking_active = False
         self._last_xyz     = None
         self._last_raw_xyz = None   # uncalibrated arm coords, used to set calib origin
@@ -327,10 +328,17 @@ class GloveTrackerNode(Node):
         self.create_subscription(Image,      '/camera/color/image_raw',   self.color_callback, 1)
         self.create_subscription(Image,      '/camera/depth/image_raw',   self.depth_callback, 10)
         self.create_subscription(CameraInfo, '/camera/depth/camera_info', self.info_callback,  10)
+        self.create_subscription(Bool, '/glove/connected', self._glove_connected_cb, 10)
+
+        self._glove_connected = False
+        self._glove_locked = False
 
         self.get_logger().info('Glove tracker node started — focus OpenCV window, Q to quit')
 
     # ── Sensor callbacks ───────────────────────────────────────────────────────
+
+    def _glove_connected_cb(self, msg):
+        self._glove_connected = msg.data
 
     def info_callback(self, msg: CameraInfo):
         self.fx = msg.k[0]
@@ -342,7 +350,7 @@ class GloveTrackerNode(Node):
         self.latest_depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
 
     def color_callback(self, msg: Image):
-        if self.latest_depth is None or self.fx is None:
+        if self._quit or self.latest_depth is None or self.fx is None:
             return
 
         img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -562,6 +570,12 @@ class GloveTrackerNode(Node):
             msg = Float32MultiArray()
             msg.data = [0.0, 0.0, 0.0, 0.0, 0.0]
             self.pub_curl.publish(msg)
+        elif key == ord('k') or key == ord('K'):
+            self._glove_locked = not self._glove_locked
+            cmd = 'lock' if self._glove_locked else 'free'
+            msg = String(); msg.data = cmd
+            self.pub_glove.publish(msg)
+            print(f'[KEY] glove {cmd}', flush=True)
         elif key == ord('q') or key == ord('Q'):
             self._send_arm('quit')
             time.sleep(2.0)   # ensure message delivered before ROS shuts down
@@ -682,6 +696,15 @@ class GloveTrackerNode(Node):
             cv2.putText(img, label, (x, 6 + th + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
             x += tw + 16
 
+        # ── Glove connection status badge ──────────────────────────────────────
+        badge_label = 'GLOVE: CONNECTED' if self._glove_connected else 'GLOVE: DISCONNECTED'
+        badge_color = (50, 200, 50) if self._glove_connected else (50, 50, 220)
+        (bw, bh), _ = cv2.getTextSize(badge_label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        bx, by = w // 2 - bw // 2, 18
+        cv2.rectangle(img, (bx - 6, by - bh - 4), (bx + bw + 6, by + 4), badge_color, -1)
+        cv2.putText(img, badge_label, (bx, by),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
         # ── Bottom-right key legend ────────────────────────────────────────────
         legend = ['--- KEYS (click window) ---',
                   '1/2: wrist up/dn',
@@ -689,6 +712,7 @@ class GloveTrackerNode(Node):
                   '5/6: palm cw/ccw',
                   'G: open hand',
                   'H: close hand',
+                  ('K: UNLOCK glove' if self._glove_locked else 'K: lock glove'),
                   'P: pause arm',
                   'O: pause hand',
                   'L: hand estop',
@@ -812,7 +836,7 @@ def _make_placeholder():
     img = np.zeros((480, 640, 3), dtype=np.uint8)
     cv2.putText(img, 'Waiting for camera...', (160, 220),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 255), 2)
-    cv2.putText(img, 'G=open hand   H=close hand', (170, 270),
+    cv2.putText(img, 'G=open hand   H=close hand   K=lock glove', (130, 270),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
     cv2.putText(img, 'SPACE=calibrate   Q=quit', (185, 300),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)

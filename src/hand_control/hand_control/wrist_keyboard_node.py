@@ -9,6 +9,8 @@ Wrist keyboard controller — reads from the terminal it is run in.
   L              → toggle hand ESTOP / RESUME_ALL (servos limp / re-enabled)
   X              → immediately cut arm motor power
   Q              → quit (parks arm)
+
+  K (glove lock/unlock) → use the CV window — it has debounce
 """
 
 import sys
@@ -36,11 +38,13 @@ def read_key():
 class WristKeyboardNode(Node):
     def __init__(self):
         super().__init__('wrist_keyboard_node')
-        self.arm_pub  = self.create_publisher(String, '/arm_control_command', 10)
-        self.hand_pub = self.create_publisher(String, '/hand/command', 10)
+        self.arm_pub   = self.create_publisher(String, '/arm_control_command', 10)
+        self.hand_pub  = self.create_publisher(String, '/hand/command', 10)
+        self.glove_pub = self.create_publisher(String, '/glove/command', 10)
         self._arm_paused  = False
         self._hand_paused = False
         self._hand_estop  = False
+        self._glove_locked = False
         print('\n=== Wrist / Hand Control ===')
         print('  W / UP   arrow → wrist up')
         print('  S / DOWN arrow → wrist down')
@@ -60,6 +64,11 @@ class WristKeyboardNode(Node):
         msg = String(); msg.data = cmd
         self.hand_pub.publish(msg)
         print(f'  [HAND] {cmd}')
+
+    def _send_glove(self, cmd):
+        msg = String(); msg.data = cmd
+        self.glove_pub.publish(msg)
+        print(f'  [GLOVE] {cmd}')
 
     def run(self):
         while rclpy.ok():

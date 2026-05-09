@@ -101,6 +101,7 @@ class GloveNode(Node):
         self._pub_pct         = self.create_publisher(Float32MultiArray, "/glove/finger_pct", 10)
         self._pub_arm_cmd     = self.create_publisher(String, "/arm_control_command", 10)
         self._pub_calibrating = self.create_publisher(Bool, "/glove/calibrating", 10)
+        self._pub_connected   = self.create_publisher(Bool, "/glove/connected", 10)
         self._sub_servo = self.create_subscription(
             Int32MultiArray, "/glove/servo_cmd", self._servo_cmd_cb, 10)
         self._sub_cmd = self.create_subscription(
@@ -108,12 +109,13 @@ class GloveNode(Node):
         self._sub_lock_cmd = self.create_subscription(
             Int32MultiArray, "/glove/lock_cmd", self._lock_cmd_cb, 10)
 
-        self._lock            = threading.Lock()
-        self._raw_values      = [0] * 5
-        self._servo_values    = [1000] * 5
-        self._haptics_enabled = False   # set True via /glove/command 'haptics_on'
+        self._lock             = threading.Lock()
+        self._raw_values       = [0] * 5
+        self._servo_values     = [1000] * 5
+        self._haptics_enabled  = False   # set True via /glove/command 'haptics_on'
+        self._position_locked  = False   # True while K-locked; blocks servo_cmd overwrites
         self._rx_buf          = ""
-        self._calibrated      = False
+        self._calibrated      = self._skip_calib   # True immediately when calibration skipped
         self._limits          = _make_limits(_DEFAULT_OPEN, _DEFAULT_CLOSED)
 
         # Servo-pot calibration: pot readings at servo cmd 0 (taut=closed) and 1000 (free=open)
@@ -121,9 +123,10 @@ class GloveNode(Node):
         self._pot_at_cmd1000 = list(_DEFAULT_OPEN)
         self._servo_calib_done = True
 
-        self._ble_client  = None
-        self._stop_event  = asyncio.Event()
-        self._ble_loop    = asyncio.new_event_loop()
+        self._ble_client    = None
+        self._stop_event    = asyncio.Event()
+        self._shutting_down = False
+        self._ble_loop      = asyncio.new_event_loop()
 
         self._pub_timer = self.create_timer(self._pub_period, self._publish_fingers)
 
@@ -154,14 +157,14 @@ class GloveNode(Node):
         if len(msg.data) < 5:
             return
         with self._lock:
-            if self._haptics_enabled:
+            if self._haptics_enabled and not self._position_locked:
                 self._servo_values = [max(0, min(1000, int(v))) for v in msg.data[:5]]
 
     def _lock_cmd_cb(self, msg: Int32MultiArray):
         """0=free, 1=lock at current position, per finger."""
         if len(msg.data) < 5:
             return
-        if not self._haptics_enabled:
+        if not self._haptics_enabled or self._position_locked:
             return
         for i in range(5):
             if msg.data[i]:
@@ -175,9 +178,11 @@ class GloveNode(Node):
     def _command_cb(self, msg: String):
         cmd = msg.data.strip().lower()
         if cmd == 'lock':
+            self._position_locked = True
             self.lock_at_current_position()
             self.get_logger().info('[GLOVE] Locked at current position.')
         elif cmd == 'free':
+            self._position_locked = False
             with self._lock:
                 self._servo_values = [1000] * 5
             self.get_logger().info('[GLOVE] Servos freed.')
@@ -198,6 +203,8 @@ class GloveNode(Node):
 
     def _on_ble_disconnect(self, client):
         self.get_logger().warn("[BLE] Disconnected.")
+        msg = Bool(); msg.data = False
+        self._pub_connected.publish(msg)
         self._stop_event.set()
 
     def _on_notify(self, sender, data):
@@ -420,6 +427,7 @@ class GloveNode(Node):
     # ── Heartbeat / main BLE loop ──────────────────────────────────────────────
 
     async def _heartbeat_loop(self, client):
+        connected_msg = Bool(); connected_msg.data = True
         while not self._stop_event.is_set():
             with self._lock:
                 values = list(self._servo_values)
@@ -427,6 +435,7 @@ class GloveNode(Node):
             if not ok:
                 self._stop_event.set()
                 break
+            self._pub_connected.publish(connected_msg)
             await asyncio.sleep(self._hb_period)
 
     def _reset_ble_adapter(self):
@@ -441,7 +450,7 @@ class GloveNode(Node):
     async def _ble_main(self):
         first_connect = True
         scan_failures = 0
-        while rclpy.ok():
+        while rclpy.ok() and not self._shutting_down:
             self._stop_event.clear()
             self.get_logger().info(f"[BLE] Scanning for '{self._device_name}'...")
             device = await BleakScanner.find_device_by_name(self._device_name, timeout=30.0)
@@ -474,6 +483,8 @@ class GloveNode(Node):
 
                     self._ble_client = client
                     self.get_logger().info("[BLE] Connected and ready.")
+                    msg = Bool(); msg.data = True
+                    self._pub_connected.publish(msg)
                     # Try to stop any stale notify before subscribing
                     try:
                         await client.stop_notify(NUS_TX_UUID)
@@ -510,8 +521,12 @@ class GloveNode(Node):
 
     def destroy_node(self):
         self.get_logger().info("Shutting down GloveNode...")
+        self._shutting_down = True
         self._stop_event.set()
-        self._ble_loop.call_soon_threadsafe(self._ble_loop.stop)
+        # Schedule loop stop 0.5s from now so BleakClient __aexit__ can disconnect cleanly
+        self._ble_loop.call_soon_threadsafe(
+            lambda: self._ble_loop.call_later(0.5, self._ble_loop.stop)
+        )
         self._ble_thread.join(timeout=3.0)
         super().destroy_node()
 
