@@ -17,7 +17,7 @@ RAW_LIMITS = {
     1: (-0.2010,  0.2913),   # left → right
     2: (-0.2193,  0.0150),   # up → down (more negative = higher)
     3: (-0.2463,  0.2254),   # left twist → right twist
-    4: (-0.2918, -0.0288),   # tucked → extended
+    4: (-0.2918,  0.1500),   # tucked → extended
     5: (-0.3451, -0.0189),   # down → up
 }
 
@@ -33,11 +33,11 @@ MOTOR_TIMEOUTS = {1: 3.0, 2: 2.0, 3: 2.0, 4: 2.0, 5: 2.0}
 
 # Origin pose in raw units
 ORIGIN_POSE_RAW = {
-    1:  0.0329,
-    2: -0.0778,
-    3: -0.0082,   # palm down — locked, never moves during teleop
-    4: -0.0233,
-    5: -0.1012,
+    1:  0.0220,
+    2: -0.1114,
+    3:  0.0188,   # palm down — locked, never moves during teleop
+    4:  0.0059,
+    5: -0.0908,
 }
 
 PARK_POSE_RAW = {}  # set dynamically at startup

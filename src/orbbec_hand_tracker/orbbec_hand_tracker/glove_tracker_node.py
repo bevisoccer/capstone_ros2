@@ -73,11 +73,11 @@ ARM_Z_MAX = 0.50
 HOLDOVER_FRAMES = 80
 
 # ── Movement sensitivity scale ─────────────────────────────────────────────────
-# 1 cm of hand movement → ARM_Z/Y_SCALE cm of arm workspace movement.
-# Z needs the most amplification — the arm's M2 range spans 35 cm of arm_z.
+# X uses depth (meters); Y and Z use normalized pixel coords to avoid
+# depth-coupling crosstalk (lateral motion changing depth → spurious Z shift).
 ARM_X_SCALE = 0.3
-ARM_Z_SCALE = 0.5
-ARM_Y_SCALE = 0.5
+ARM_Y_PIXEL_SCALE = 0.6   # fraction of frame width  → arm_y range
+ARM_Z_PIXEL_SCALE = 0.5   # fraction of frame height → arm_z range
 
 # ── Gesture recognition ───────────────────────────────────────────────────────
 GESTURE_HOLD_FRAMES     = 20   # frames gesture must be held to fire (~0.5s at ~30fps)
@@ -440,10 +440,13 @@ class GloveTrackerNode(Node):
         # Axial depth: remove lateral component so moving left/right doesn't shift x
         z_axial = math.sqrt(max(0.0, z*z - cam_x*cam_x - cam_y*cam_y))
 
-        # Raw arm coords (before calibration offset)
+        # Raw arm coords (before calibration offset).
+        # Y and Z use normalized pixel coords so lateral depth noise doesn't
+        # cause spurious Z (height) changes when the hand moves left/right.
+        dh, dw = self.latest_depth.shape[:2]
         arm_x_raw = HOME_X + (z_axial - 0.50) * ARM_X_SCALE
-        arm_y_raw = HOME_Y + (-cam_x * ARM_Y_SCALE)
-        arm_z_raw = HOME_Z + (-cam_y * ARM_Z_SCALE)
+        arm_y_raw = HOME_Y + (-(u / dw - 0.5) * ARM_Y_PIXEL_SCALE)
+        arm_z_raw = HOME_Z + (-(v / dh - 0.5) * ARM_Z_PIXEL_SCALE)
         self._last_raw_xyz = (arm_x_raw, arm_y_raw, arm_z_raw)
 
         # During calibration: show raw position so user can pick neutral, don't publish
